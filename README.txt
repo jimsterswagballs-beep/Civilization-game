@@ -1,10 +1,36 @@
-KINGDOMS OF CHAOS · LIVING WORLD UPDATE (v4.4)
+KINGDOMS OF CHAOS · LIVING WORLD UPDATE (v4.8)
 ================================================
 
 HOW TO PLAY
 1. Extract the ZIP folder.
 2. Open KingdomsOfChaos/index.html in a current version of Chrome, Edge, or Firefox.
 3. Click Begin Your Reign. Click once in the page to enable the soundtrack.
+
+WHAT'S NEW IN v4.8 — ONLINE PLAY THROUGH A RELAY SERVER
+- Online lobbies now work without the Claude-hosted version. The game connects to a relay server (relay/server.js, included separately) that relays lobby, commands and world state between players.
+- Host a lobby with "Online Lobby", then share the invite link or code. Other players join from the same address.
+- To use it, host the game (for example on GitHub Pages) and run the relay. Set RELAY_DEFAULT in the online script of index.html to your relay address (wss://...), or open the game with ?relay=wss://your-relay.
+- Up to 8 players per lobby. Online play is tested for lobby, match start and commands. Captives, morale and siege targets are not yet synced to other players.
+
+WHAT'S NEW IN v4.7 — WAR & THE KIDNAPPER'S LOOK
+- Kidnapper sprite redrawn: a dark hooded figure in a team-coloured sash, carrying a sack when holding a captive. It no longer carries a weapon.
+- Archer (O, Barracks). Shoots arrows at enemies up to 150 away for 5 damage. Frail up close.
+- Siege Engine (L, Barracks, Medieval Age). A slow catapult that bombards enemy buildings for 22 damage every 2.5 seconds at range 200. It ignores soldiers and is driven by its own AI, so right-click a building to target it.
+- Morale: when soldiers fall nearby, their comrades lose morale. A soldier whose morale falls too low breaks and runs to the castle for a few seconds, then recovers.
+- Supply lines: soldiers more than 360 tiles from their castle drain extra food each second.
+
+WHAT'S NEW IN v4.6 — JUSTICE: KIDNAPPERS, JAILS & PUBLIC EXECUTIONS
+- Kidnapper (K, trained at a Barracks in the Medieval Age). Right-click an enemy adult civilian to order an abduction. The kidnapper carries the captive back to one of your Jails. Children, heroes and allied kingdoms cannot be taken.
+- Jail (Medieval Age, holds 4 captives). Captives cannot work and grow unhappier while held. Select a Jail to order a public execution or a release.
+- Guillotine (Medieval Age). Required for public executions. The captive is brought to the blade; the captor's citizens nearby watch. Witnesses lose happiness but feel safer, the captor's approval drops, and the execution is recorded in the Gazette and history.
+- Kidnappers that cannot reach their target give up and release their captive.
+
+WHAT'S NEW IN v4.5 — WORKPLACES & A CLEARER SCREEN
+- Civilians now hold jobs. Farms (3 workers), mines (3), greenhouses (2), factories (4) and labs (2) each have worker places. Idle citizens are assigned to the nearest free place, walk there at the start of their shift (08:00–16:00), work it and go home in the evening.
+- Staffing sets output. Fully staffed buildings produce at full rate. Workers who are tired, unhappy or lacking tools work more slowly. An unstaffed building still runs at 60% so early games are not starved of food or gold.
+- Wages are paid only to citizens who hold a job, a trade, a build or an expedition. Previously anyone standing near a building was paid. Unemployed citizens lose a little happiness during working hours.
+- Citizen life stories and inspection cards show each person's career and workplace. Building panels show workers and efficiency. The Economy tab lists workplace staffing and output.
+- The screen is reorganised into two columns beside the map (resources, log and selection on the left; menu, kingdoms, controls and minimap on the right), the Village Talk / Gazette / Economy panel above the action dock, and the action dock along the bottom. Panels no longer cover each other, and the layout adapts to smaller windows and phones.
 
 WHAT'S NEW IN v4.4 — SEASONS, TRADE & LEGENDS
 - Seasons cycle through Spring, Summer, Autumn and Winter. Weather can be clear, rainy, stormy, snowy, frosty or hot. The map receives seasonal tints and weather particles.
