@@ -1,4 +1,12 @@
 KINGDOMS OF CHAOS · SOCIAL LIFE & COMMERCE UPDATE (v4.1)
+
+AUDIO FIX
+- Music tracks are now stored beside index.html instead of inside a nested audio folder.
+- The game loads music with simple local relative paths (./TrackName.mp3), which is more reliable when opening index.html directly from an extracted ZIP.
+- The soundtrack initializes on the first click/tap/key press and preloads the tracks for smoother switching.
+- Keep all three MP3 files in the same folder as index.html when moving the game.
+
+KINGDOMS OF CHAOS · SOCIAL LIFE & COMMERCE UPDATE (v4.1)
 ========================================================
 
 HOW TO PLAY

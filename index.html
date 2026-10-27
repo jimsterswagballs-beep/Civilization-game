@@ -547,16 +547,16 @@ function draw(dt){env();stepFx(dt);const W=C.width,H=C.height;g.setTransform(1,0
  for(const u of U){mg.fillStyle=cols[u.team];mg.fillRect(u.x*m-1,u.y*m-1,2.5,2.5)}for(const b of B){mg.fillStyle=cols[b.team];mg.strokeStyle='#000';mg.lineWidth=1;let s=b.t=='castle'?8:5;mg.fillRect(b.x*m-s/2,b.y*m-s/2,s,s);mg.strokeRect(b.x*m-s/2,b.y*m-s/2,s,s)}
  mg.strokeStyle='#fff';mg.lineWidth=1.2;mg.strokeRect(cam.x*m,cam.y*m,W/z*m,H/z*m)}
 // ---- music
-const TRK={peace:{f:'audio/Timeline_of_Humanity.mp3',n:'Timeline of Humanity',g:.77},rain:{f:'audio/Rain.mp3',n:'Rain',g:.66},war:{f:'audio/Ice_and_Fire.mp3',n:'Ice and Fire',g:1}};
+const TRK={peace:{f:'Timeline_of_Humanity.mp3',n:'Timeline of Humanity',g:.77},rain:{f:'Rain.mp3',n:'Rain',g:.66},war:{f:'Ice_and_Fire.mp3',n:'Ice and Fire',g:1}};
 const mu={on:true,vol:.6,started:0,mood:null,want:'peace',since:0,els:{}};
 try{let s=JSON.parse(localStorage.getItem('koc_mu')||'null');if(s){mu.on=s.on!==false;mu.vol=cl(+s.vol||0,0,1)}}catch(e){}
 function muSave(){try{localStorage.setItem('koc_mu',JSON.stringify({on:mu.on,vol:mu.vol}))}catch(e){}}
-function muInit(){for(const k in TRK){let a=new Audio();a.src=TRK[k].f;a.loop=true;a.preload='auto';a.volume=0;a.addEventListener('error',()=>{TRK[k].bad=1});mu.els[k]=a}}
+function muInit(){for(const k in TRK){let a=new Audio();a.src='./'+TRK[k].f;a.loop=true;a.preload='auto';a.volume=0;a.setAttribute('playsinline','');a.addEventListener('canplaythrough',()=>{TRK[k].ready=1},{once:true});a.addEventListener('error',()=>{TRK[k].bad=1});mu.els[k]=a}}
 function muMood(m){if(!mu.started||m==mu.mood)return;let now=performance.now()/1000;if(mu.mood&&m!='war'&&now-mu.since<30)return;mu.mood=m;mu.since=now;if(playing)announce(TRK[m].n);mtUI()}
 function muTick(dt){if(!mu.started)return;muMood(playing?mu.want:'peace');for(const k in mu.els){let a=mu.els[k],tg=mu.on&&mu.mood==k&&!TRK[k].bad?mu.vol*TRK[k].g:0,v=a.volume,st=dt/2.4;v=v<tg?Math.min(tg,v+st):Math.max(tg,v-st);try{a.volume=cl(v,0,1)}catch(e){}
   if(tg>0&&a.paused){let p=a.play();if(p&&p.catch)p.catch(()=>{})}else if(tg==0&&v<=.002&&!a.paused)a.pause()}}
-function muGo(){if(mu.started)return;mu.started=1;muInit();muMood('peace');muTick(0);mtUI()}
-['pointerdown','keydown'].forEach(e=>addEventListener(e,muGo,{passive:true}));
+function muGo(){if(mu.started)return;mu.started=1;muInit();muMood('peace');for(const k in mu.els){const a=mu.els[k];try{const p=a.play();if(p&&p.catch)p.catch(()=>{})}catch(e){}}muTick(0);mtUI()}
+['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,muGo,{passive:true}));
 function announce(n){let e=$('now');e.textContent='♪ Now playing — '+n;e.classList.add('show');clearTimeout(announce.t);announce.t=setTimeout(()=>e.classList.remove('show'),5500)}
 function setVol(v){mu.vol=cl(v,0,1);if(mu.vol>0&&!mu.on)mu.on=true;muSave();mtUI()}
 function togMu(){mu.on=!mu.on;muSave();mtUI()}
