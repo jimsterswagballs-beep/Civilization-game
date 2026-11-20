@@ -89,7 +89,7 @@ export class Game{
    tgt:{x:0,y:0,z:0,yaw:0,pitch:0},jumpHeld:false,prevFire:false,prevCrouch:false,prevJump:false};
   e.pos.copy(this.bus.pos);e.rpos.copy(e.pos);
   this.ents.set(e.id,e);this.list.push(e);this.makeSprite(e);
-  if(e.bot)this.initBot(e);
+  if(e.bot)this.initBot(e,info);
   return e}
  // ---------- sprites
  makeSprite(e){
@@ -160,6 +160,7 @@ export class Game{
  emit(ev,to){
   if(this.role==='client')return;
   if(to!==undefined&&to!==null){const e=this.ents.get(to);if(e&&e.peer!==undefined&&e.id!==this.myId){this.net.send(e.peer,{t:'ev',e:[ev]});return}if(e&&e.bot){if(ev.k==='st')this.applyStatusLocal(e,ev);return}this.handleEvent(ev);return}
+  if((ev.k==='sh'||ev.k==='ex')&&this.botHear)this.botHear(ev);
   this.handleEvent(ev);this.outEvents.push(ev)}
  handleEvent(ev){
   const me=this.me;const fx=this.fx,au=this.audio;

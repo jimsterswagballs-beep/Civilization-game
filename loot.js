@@ -11,6 +11,13 @@ export function rollItem(rng,q=1,min=0){
  if(k<.22||min>0&&k<.8){const w=pick(rng,WEAPON_W);const r=rollRarity(rng,q,min);return{k:'w',w,r,mag:wstat(w,r).mag}}
  if(k<.42){const types=Object.keys(AMMO);const t=types[pick(rng,[10,8,6,3,1.5])];return{k:'a',t,n:AMMO[t].box}}
  const its=['bandage','minishield','medkit','bigshield','chug','grapple','pad','frag','boogie','banana'];const ws=[9,8,3.5,2.5,.7,2.2,2,2.8,1.4,1.6];const id=its[pick(rng,ws)];return{k:'i',id,n:ITEMS[id].give}}
+// Floor loot (not chests): mostly healing/utility, with the odd weapon or ammo stack.
+// Floor weapons skew low rarity (never above Epic) so chests stay the place to find the good stuff.
+export function rollFloorItem(rng,q=1){
+ const k=rng();
+ if(k<.16){const w=pick(rng,WEAPON_W);const r=Math.min(3,rollRarity(rng,Math.min(q,1)*.6));return{k:'w',w,r,mag:wstat(w,r).mag}}
+ if(k<.42){const types=Object.keys(AMMO);const t=types[pick(rng,[10,8,6,3,1.5])];return{k:'a',t,n:Math.ceil(AMMO[t].box*.7)}}
+ const its=['bandage','minishield','medkit','bigshield','chug','grapple','pad','frag','boogie','banana'];const ws=[9,8,3,1.5,.4,2.2,2,2.8,1.4,1.6];const id=its[pick(rng,ws)];return{k:'i',id,n:ITEMS[id].give}}
 export function rollWeapon(rng,q=1,min=0){const w=pick(rng,WEAPON_W);const r=rollRarity(rng,q,min);return{k:'w',w,r,mag:wstat(w,r).mag}}
 export function itemName(it){if(it.k==='w')return RARITY[it.r].n+' '+WEAPONS[it.w].n;if(it.k==='i')return ITEMS[it.id].n+(it.n>1?' x'+it.n:'');return AMMO[it.t].n+' Ammo x'+it.n}
 export function itemColor(it){if(it.k==='w')return RARITY[it.r].c;if(it.k==='i')return ITEMS[it.id].col;return AMMO[it.t].c}
@@ -113,12 +120,15 @@ export function makeItemLootVis(l){
  const trim=new THREE.Mesh(G.ground,glowMat(c,.7));trim.rotation.x=Math.PI/2;trim.position.y=.12;g.add(trim);
  const float=new THREE.Group();float.position.y=.22;g.add(float);
  const model=makeFloorItem(it);float.add(model);
+ // effect tier: weapons scale with rarity; ammo/items stay subtle (valuable consumables get a halo)
+ const tier=it.k==='w'?it.r:(it.k==='i'&&['chug','bigshield','medkit'].includes(it.id)?2:0);
  const hr=it.k==='w'?.82:it.k==='a'?.48:.58;
  const halo=new THREE.Mesh(G.hoop,glowMat(c,.85));halo.scale.setScalar(hr/.48);halo.rotation.x=Math.PI/2;halo.position.y=.52;float.add(halo);
  const orbit=new THREE.Group();float.add(orbit);
  const sparkMat=glowMat(c,1);
  for(let k=0;k<4;k++){const s=new THREE.Mesh(G.spark,sparkMat);const a=k/4*Math.PI*2;s.position.set(Math.cos(a)*hr,.42+Math.sin(k*2)*.08,Math.sin(a)*hr);orbit.add(s)}
- const shaft=new THREE.Mesh(G.shaft,glowMat(c,.13));shaft.scale.set(1,it.r>=4?2.2:1.25,1);shaft.position.y=it.r>=4?1.1:.63;g.add(shaft);
+ const shaft=new THREE.Mesh(G.shaft,glowMat(c,.13));shaft.scale.set(1,tier>=4?2.2:1.25,1);shaft.position.y=tier>=4?1.1:.63;g.add(shaft);
+ halo.visible=tier>=2;orbit.visible=tier>=2;shaft.visible=tier>=3;trim.material.opacity=tier>=2?.7:.45;
  Object.assign(g.userData,{float,model,halo,orbit,trim,platform,shaft,phase:l.id*2.399,rarity:it.k==='w'?it.r:0});
  return g;
 }
@@ -137,24 +147,28 @@ export function animLootMesh(g,dt,t){
  const sc=1+Math.max(0,wave)*.035;u.platform.scale.set(sc,1,sc);
 }
 export const lootMethods={
- genLoot(rng){let id=1;this.loot.clear();const seenB=new Set();
+ genLoot(rng){let id=1;this.loot.clear();
+  // Floor loot is intentionally uncommon so players have to hunt for chests.
+  const SKIP_OUT=.8,SKIP_IN=.5;
   for(const s of W.lootSpots){
    if(s.chest){this.addLootObj({id:id++,x:s.x,y:s.y,z:s.z,chest:1,q:s.q});continue}
-   if(!s.inside&&rng()<.4)continue;
-   const n=s.inside?(rng()<.5?2:1):1;
+   if(rng()<(s.inside?SKIP_IN:SKIP_OUT))continue;
+   const n=s.inside&&rng()<.12?2:1;
    for(let i=0;i<n;i++){
-    // indoor floor loot: first item is a weapon a quarter of the time (guns are rarer than before)
-    const it=s.inside&&i===0&&rng()<.25?rollWeapon(rng,s.q):rollItem(rng,s.q);
+    const it=rollFloorItem(rng,s.q);
     const a=rng()*6.283,off=i?.9:0;let x=s.x+Math.cos(a)*off,z=s.z+Math.sin(a)*off,y=s.y;
     if(off&&W.blocked(x,y,z,.3,1,.05)){x=s.x;z=s.z}
     this.addLootObj({id:id++,x,y,z,item:it})}
-   if(s.inside&&rng()<.15){this.addLootObj({id:id++,x:s.x+.5,y:s.y,z:s.z-.6,item:{k:'a',t:['light','med','shells'][Math.floor(rng()*3)],n:20}})}
   }
-  // ammo boxes
-  for(let i=0;i<40;i++){const a=rng()*6.283,r=Math.sqrt(rng())*W.ISL*.8;const x=Math.cos(a)*r,z=Math.sin(a)*r;const y=W.H(x,z);if(y<2.5||W.blocked(x,y+.1,z,.5,1,.05))continue;this.addLootObj({id:id++,x,y:y+.1,z,ammobox:1})}
+  // ammo crates
+  for(let i=0;i<28;i++){const a=rng()*6.283,r=Math.sqrt(rng())*W.ISL*.8;const x=Math.cos(a)*r,z=Math.sin(a)*r;const y=W.H(x,z);if(y<2.5||W.blocked(x,y+.1,z,.5,1,.05))continue;this.addLootObj({id:id++,x,y:y+.1,z,ammobox:1})}
  },
  addLootObj(l,fromEv){if(l.item&&l.item.k==='a'&&!l.chest){}this.loot.set(l.id,Object.assign(l,{mesh:null}))},
- removeLoot(id){const l=this.loot.get(id);if(!l)return;if(l.mesh)this.dynamic.remove(l.mesh);this.loot.delete(id)},
+ removeLoot(id){const l=this.loot.get(id);if(!l)return;
+  if(l.mesh){this.dynamic.remove(l.mesh);l.mesh=null;
+   // pickup pop: coloured burst + ring where the item was
+   if(l.item&&this.fx){const c=itemColor(l.item);this.fx.burst(l.x,l.y+.5,l.z,14,3.5,c,.45,4);this.fx.ring(new THREE.Vector3(l.x,l.y+.1,l.z),1.3,c,.35)}}
+  this.loot.delete(id)},
  spawnLoot(item,x,z,y){ // host only
   const id=this.nextLootId++;const l={id,x,y:y===undefined?W.H(x,z)+.1:y,z,item};this.loot.set(id,Object.assign(l,{mesh:null}));
   this.outEvents.push({k:'lt+',l:{id,x:l.x,y:l.y,z:l.z,item}});return l},
