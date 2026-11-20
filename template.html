@@ -1,0 +1,21 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pixel Royale – 3D Battle Royale</title><style>/*CSS*/</style></head>
+<body><canvas id="gl"></canvas>
+<div id="hud" style="display:none"></div>
+<div id="bigmap"><canvas id="bm" width="900" height="900"></canvas></div>
+<div id="elim"><div class="sub">You were</div><div style="font-family:'Arial Black',Impact,sans-serif;font-size:34px">ELIMINATED</div><div id="elimPlace">#0</div><div id="elimBy" style="font-size:22px;font-weight:800"></div><div id="elimKills" class="sub"></div><div class="row"><button class="btn sec" id="btnSpec">Spectate</button><button class="btn red" id="btnElimMenu">Leave Match</button></div></div>
+<div id="victory"><div id="confetti"></div><div class="sub" id="vicSub">#1</div><div id="vicTitle">VICTORY ROYALE</div><div id="vicKills" class="sub"></div><div class="row"><button class="btn green" id="btnAgain">Back to Lobby</button></div></div>
+<div id="ui">
+ <div class="screen show" id="loading"><h1 class="logo">Pixel <span>Royale</span></h1><div class="bar"><i></i></div><div class="sub">Generating island…</div></div>
+ <div class="screen" id="title"></div>
+ <div class="screen page" id="offline"></div>
+ <div class="screen page" id="online"></div>
+ <div class="screen page" id="lobby"></div>
+ <div class="screen page" id="chars"></div>
+ <div class="screen page" id="locker"></div>
+ <div class="screen page" id="settings"></div>
+ <div class="screen page" id="credits"></div>
+ <div class="screen page" id="updates"></div>
+ <div class="screen" id="pause"></div>
+</div>
+<div id="toastG"></div>
+<script>/*JS*/</script></body></html>
