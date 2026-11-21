@@ -1,3 +1,4 @@
+import {CHARS} from './data.js';
 // Bot roster generation: hundreds of curated names + thousands of generated combinations,
 // themed by personality so "Sir Hidesalot" is more likely to be a camper than a rusher.
 export const PERSONA_WEIGHTS={balanced:20,rusher:16,camper:13,sniper:10,looter:14,survivor:12,opportunist:12,trickster:6};
@@ -44,7 +45,7 @@ export function makeBotRoster(n,rng=Math.random){
   do{name=gen(rng,persona).trim();tries++}while((used.has(name.toLowerCase())||name.length>16||name.length<2)&&tries<60);
   if(used.has(name.toLowerCase()))name=name.slice(0,12)+' '+(i+2);
   used.add(name.toLowerCase());
-  out.push({name,persona,char:rng()<.5?'zach':'coolguy15',cos:{nameColor:rng()<.35?'#ffd0d0':pick(rng,NAME_COLS),trail:rng()<.3?pick(rng,TRAILS):'',emote:Math.floor(rng()*3)}});
+  out.push({name,persona,char:CHARS[Math.floor(rng()*CHARS.length)].id,cos:{nameColor:rng()<.35?'#ffd0d0':pick(rng,NAME_COLS),trail:rng()<.3?pick(rng,TRAILS):'',emote:Math.floor(rng()*3)}});
  }
  return out}
 export const NAME_POOL_SIZE=CURATED.length+ADJ.length*NOUN.length;

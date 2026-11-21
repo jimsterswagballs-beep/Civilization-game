@@ -1,14 +1,17 @@
 import * as THREE from 'three';
 import {WEAPONS,RARITY} from './data.js';
-import zf from '../assets/zach_front.png';import zs from '../assets/zach_side.png';import zb from '../assets/zach_back.png';
-import cf from '../assets/coolguy15_front.png';import cs from '../assets/coolguy15_side.png';import cb from '../assets/coolguy15_back.png';
-export const IMG={zach:{front:zf,side:zs,back:zb},coolguy15:{front:cf,side:cs,back:cb}};
+import zf from './zach_front.png';import zs from './zach_side.png';import zb from './zach_back.png';
+import cf from './coolguy15_front.png';import cs from './coolguy15_side.png';import cb from './coolguy15_back.png';
+import kf from './chill_guy_front.png';import ks from './chill_guy_side.png';import kb from './chill_guy_back.png';
+import jf from './jay_front.png';import js from './jay_side.png';import jb from './jay_back.png';
+// every character needs front / side / back art: updateSprite() picks the view from the camera angle and mirrors the side view
+export const IMG={zach:{front:zf,side:zs,back:zb},coolguy15:{front:cf,side:cs,back:cb},chillguy:{front:kf,side:ks,back:kb},jay:{front:jf,side:js,back:jb}};
 export const R=.42,HSTAND=1.8,HCROUCH=1.3,EYE=1.65,EYEC=1.1,EYES=.85,GRAV=23,JUMP=7.8,WALK=5.8,SPRINT=9.4,CROUCH=3;
 export const texCache={};
 export function charTex(ch,view){const k=ch+view;if(texCache[k])return texCache[k];const t=new THREE.TextureLoader().load(IMG[ch][view]);t.colorSpace=THREE.SRGBColorSpace;t.magFilter=THREE.NearestFilter;t.minFilter=THREE.LinearMipmapLinearFilter;t.anisotropy=4;return texCache[k]=t}
 const sc={};
 // global weapon damage multiplier (lower = weapons deal less damage)
-export const WEAPON_DMG_MUL=.7;
+export const WEAPON_DMG_MUL=.55;
 export function wstat(w,r){const k=w*10+r;if(sc[k])return sc[k];const d=WEAPONS[w],R_=RARITY[r];return sc[k]=Object.assign({},d,{dmg:d.dmg*R_.dm*WEAPON_DMG_MUL,rps:d.rps*(r===5?1.12:1),mag:Math.round(d.mag*R_.mm),splash:d.splash*(r>=4?1.1:1),mythic:r===5})}
 const mats={};
 export function mat(c,emi){const k=c+(emi||'');return mats[k]||(mats[k]=new THREE.MeshLambertMaterial(Object.assign({color:c},emi?{emissive:emi,emissiveIntensity:.5}:{})))}
@@ -40,7 +43,7 @@ export function angDiff(a,b){let d=b-a;while(d>Math.PI)d-=6.2832;while(d<-Math.P
 export function lerpAng(a,b,t){return a+angDiff(a,b)*t}
 // ---------- crisp (non-pixelated) billboard material with manual depth test against the low-res world pass
 export function crispMat(map){
- const u=THREE.UniformsUtils.merge([THREE.UniformsLib.fog,{tint:{value:new THREE.Vector3(1,1,1)},opac:{value:1},uRes:{value:new THREE.Vector2(1,1)},uUse:{value:0},uNear:{value:.08},uFar:{value:1600}}]);
+ const u=THREE.UniformsUtils.merge([THREE.UniformsLib.fog,{tint:{value:new THREE.Vector3(1,1,1)},addc:{value:new THREE.Vector3(0,0,0)},opac:{value:1},uRes:{value:new THREE.Vector2(1,1)},uUse:{value:0},uNear:{value:.08},uFar:{value:1600}}]);
  u.map={value:map};u.tDepth={value:null};
  const m=new THREE.ShaderMaterial({uniforms:u,transparent:true,side:THREE.DoubleSide,fog:true,
   vertexShader:`varying vec2 vUv;
@@ -48,16 +51,17 @@ export function crispMat(map){
 void main(){vUv=uv;vec4 mvPosition=modelViewMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mvPosition;
 #include <fog_vertex>
 }`,
-  fragmentShader:`uniform sampler2D map;uniform vec3 tint;uniform float opac;uniform sampler2D tDepth;uniform vec2 uRes;uniform float uUse;uniform float uNear;uniform float uFar;varying vec2 vUv;
+  fragmentShader:`uniform sampler2D map;uniform vec3 tint;uniform float opac;uniform sampler2D tDepth;uniform vec2 uRes;uniform float uUse;uniform float uNear;uniform float uFar;uniform vec3 addc;varying vec2 vUv;
 #include <fog_pars_fragment>
 float lin(float d){return uNear*uFar/(uFar-d*(uFar-uNear));}
 void main(){vec4 c=texture2D(map,vUv);if(c.a<0.4)discard;
  if(uUse>0.5){float wd=texture2D(tDepth,gl_FragCoord.xy/uRes).r;if(lin(gl_FragCoord.z)-0.8>lin(wd))discard;}
- gl_FragColor=vec4(c.rgb*tint,c.a*opac);
+ gl_FragColor=vec4(c.rgb*tint+addc,c.a*opac);
 #include <fog_fragment>
 #include <colorspace_fragment>
 }`});
  m.color={setRGB(r,g,b){u.tint.value.set(r,g,b)}};
+ m.glow={setRGB(r,g,b){u.addc.value.set(r,g,b)}};   // additive colour: lets pure-black sprites (Chill Guy) flash and glow
  Object.defineProperty(m,'map',{get:()=>u.map.value,set:v=>{u.map.value=v},configurable:true});
  Object.defineProperty(m,'opacity',{get:()=>u.opac.value,set:v=>{u.opac.value=v},configurable:true});
  return m}

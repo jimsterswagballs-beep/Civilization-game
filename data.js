@@ -37,6 +37,7 @@ export const WEAPONS=[
  w({n:'Potato Cannon',t:'fun',ammo:'light',dmg:32,speed:85,grav:8,rps:3,mag:10,reload:2.2,rc:1.2,auto:false,col:'#b08a55',sp2:'potato',lw:9}),
  w({n:'Fish Slapper',t:'melee',dmg:42,rps:2,range:3,melee:true,kb:8,col:'#5ab0d0',lw:8,auto:true}),
  w({n:'Pirate Blunderbuss',t:'sg',ammo:'shells',dmg:14,pellets:14,rps:.6,mag:1,reload:2.2,sp:.1,rc:4,range:30,kb:10,auto:false,col:'#6a3d1a',lw:5}),
+  w({n:'Homing Missile Launcher',t:'ex',ammo:'rockets',dmg:62,splash:4.5,speed:30,grav:0,homing:1,rps:1.1,mag:4,reload:3,rc:1.2,auto:false,col:'#5a7a4a',lw:5}),
 ];
 export const ITEMS={
  bandage:{n:'Bandage',kind:'heal',time:2,hp:15,cap:75,col:'#f2f2f2',stack:15,give:5,lw:14,ic:'🩹'},
@@ -49,7 +50,44 @@ export const ITEMS={
  frag:{n:'Frag Grenade',kind:'throw',col:'#6b8f3a',stack:6,give:3,lw:8,ic:'💣'},
  boogie:{n:'Boogie Bomb',kind:'throw',col:'#ff55ff',stack:4,give:2,lw:4,ic:'🪩'},
  banana:{n:'Banana Peel',kind:'place',col:'#ffe14a',stack:6,give:3,lw:4,ic:'🍌'},
+ jet:{n:'Jetpack',kind:'buff',buff:'jet',time:1.2,col:'#9be0ff',stack:2,give:1,lw:1.2,ic:'🚀'},
+ energy:{n:'Energy Drink',kind:'buff',buff:'energy',time:1,hp:10,col:'#c6ff3d',stack:4,give:2,lw:2.4,ic:'🥤'},
+ pepper:{n:'Chili Pepper',kind:'buff',buff:'spicy',time:1,col:'#ff3a1a',stack:4,give:2,lw:2,ic:'🌶️'},
+ cloak:{n:'Invis Cloak',kind:'buff',buff:'cloak',time:1.5,col:'#7a6cff',stack:2,give:1,lw:1,ic:'👻'},
+ drone:{n:'Recon Drone',kind:'deploy',col:'#7fe9ff',stack:2,give:1,lw:1.4,ic:'🛸'},
+ strike:{n:'Air Strike',kind:'call',col:'#ff4d3d',stack:2,give:1,lw:.9,ic:'🎯'},
+ frost:{n:'Frost Grenade',kind:'throw',col:'#8fe9ff',stack:4,give:2,lw:2,ic:'❄️'},
+ shock:{n:'Shock Trap',kind:'place',col:'#ffe14a',stack:4,give:2,lw:1.6,ic:'⚡'},
 };
+// ---------------------------------------------------------------------------------------------
+// HERO BALANCE TABLE – every tunable number for Chill Guy and Jay lives here (see ABILITIES.md).
+// Times are seconds, distances are metres, speeds are m/s. Damage is applied BEFORE the global
+// WEAPON_DMG_MUL because it is ability damage, not weapon damage.
+// ---------------------------------------------------------------------------------------------
+export const BAL={
+ chill:{
+  hp:75,
+  disappear:{cd:16,dur:3,botSeeRange:6,shimmerRange:4.5},            // cloak; attacking / taking damage ends it
+  cold:{cd:14,dur:4,dmgMul:1.3,speedMul:1.15},                        // weapon damage +30%, move speed +15%
+  strike:{cd:9,range:8.5,speed:27,maxDash:.3,dmg:30,backMul:2,backCone:.35,slow:.4,slowT:2,backSlowT:2.8,hostSlack:1.6},
+  quiet:{stepVol:.25,stepRange:12,botVisMul:.75}                      // passive: Quiet Steps
+ },
+ jay:{
+  hp:110,
+  pan:{cd:7,speedOut:32,speedBack:38,range:19,dmgOut:28,dmgBack:22,hitR:1.1,kb:6,life:3.4,catchR:1.6,height:1.15},
+  food:{cd:10,speed:27,grav:12,arc:.1,
+   burger:{heal:15,dmg:12},
+   pizza:{r:3.2,dur:5,hps:5,dmg:6},
+   chilli:{dmg:36,r:4.2,minFalloff:.4,daze:.8},
+   banana:{r:2.6,dur:6,slip:1.4,immune:2.2,dmg:0}},
+  kitchen:{cd:26,prep:.55,moveMul:.35,speed:20,grav:15,r:4.6,dur:6,hps:8},
+  passive:{foodHealMul:1.15,useTimeMul:.8,pickupReach:1.35}           // Chef's Touch
+ },
+ healTick:.5,         // heal zones pay out this often
+ slipTick:.1          // banana patches check this often
+};
+export const FOODS=['burger','pizza','chilli','banana'];
+export const FOOD_ICON={burger:'\u{1F354}',pizza:'\u{1F355}',chilli:'\u{1F336}\uFE0F',banana:'\u{1F34C}'};
 export const CHARS=[
  {id:'coolguy15',name:'Coolguy15',role:'All-rounder',hp:100,color:'#6ec6ff',
   ab:[{n:'Ground Slam',cd:12,d:'Jump into the air and slam down, sending projectiles flying in every direction.'},
@@ -59,14 +97,25 @@ export const CHARS=[
   ab:[{n:'Burger Break',cd:20,d:'Eat a burger to restore 20% health. Short stun while chewing.'},
       {n:'Chomp Lunge',cd:10,d:'Lunge forward and bite an enemy for 20% of their max health.'},
       {n:'Sugar Rush',cd:18,d:'Gain a 25 point temporary shield and +15% move speed for 5 seconds.'}]},
+ {id:'chillguy',name:'Chill Guy',role:'Stealth / Glass Cannon',hp:BAL.chill.hp,color:'#7fe0ff',hero:true,
+  passive:{n:'Quiet Steps',ic:'quiet',d:'Footsteps are 75% quieter and bots spot him from 25% less distance.'},
+  ab:[{n:'Disappear',cd:BAL.chill.disappear.cd,ic:'disappear',d:'Become invisible for '+BAL.chill.disappear.dur+' seconds. Attacking or taking damage reveals you.'},
+      {n:'Cold Blooded',cd:BAL.chill.cold.cd,ic:'cold',d:'+30% weapon damage and +15% move speed for '+BAL.chill.cold.dur+' seconds.'},
+      {n:'Sneaky Strike',cd:BAL.chill.strike.cd,ic:'strike',d:'Dash at an enemy for '+BAL.chill.strike.dmg+' damage ('+BAL.chill.strike.dmg*BAL.chill.strike.backMul+' from behind) and slow them.'}]},
+ {id:'jay',name:'Jay',role:'Chef / Support',hp:BAL.jay.hp,color:'#ff9a3c',hero:true,
+  passive:{n:"Chef's Touch",ic:'chef',d:'Reaches food and healing items from further away, uses them 20% faster and heals 15% more from food.'},
+  ab:[{n:'Pan Boomerang',cd:BAL.jay.pan.cd,ic:'pan',d:'Throw your pan. It hits enemies on the way out ('+BAL.jay.pan.dmgOut+') and back ('+BAL.jay.pan.dmgBack+') before returning to you.'},
+      {n:'Food Fight',cd:BAL.jay.food.cd,ic:'food',d:'Lob a random food: Burger heals a teammate '+BAL.jay.food.burger.heal+', Pizza makes a healing area, Chilli explodes, Banana makes a slippery patch.'},
+      {n:'Kitchen Special',cd:BAL.jay.kitchen.cd,ic:'kitchen',d:'Cook up a healing station that restores teammates nearby for '+BAL.jay.kitchen.dur+' seconds.'}]},
 ];
+export const KILL_NAMES={'-1':'Ground Slam','-2':'Energy Burst','-3':'Shockwave','-4':'Chomp','-5':'Frag Grenade','-9':'The Storm','-10':'Sneaky Strike','-11':'Pan Boomerang','-12':'Food Fight','-13':'Chilli Blast','-14':'Recon Drone','-15':'Air Strike','-16':'Frost Grenade','-17':'Boogie Bomb'};
 export const ACTIONS=[
  ['fwd','Move Forward','KeyW'],['back','Move Back','KeyS'],['left','Move Left','KeyA'],['right','Move Right','KeyD'],
  ['jump','Jump / Leave Bus','Space'],['sprint','Sprint','ShiftLeft'],['crouch','Crouch / Slide','KeyC'],
  ['fire','Fire / Use','Mouse0'],['aim','Aim Down Sights','Mouse2'],['reload','Reload','KeyR'],['interact','Interact / Pick Up','KeyE'],
  ['ab1','Ability 1','KeyQ'],['ab2','Ability 2','KeyF'],['ab3','Ability 3','KeyV'],
  ['s1','Slot 1 (Melee)','Digit1'],['s2','Slot 2','Digit2'],['s3','Slot 3','Digit3'],['s4','Slot 4','Digit4'],['s5','Slot 5','Digit5'],['s6','Slot 6','Digit6'],
- ['next','Next Slot','WheelDown'],['prev','Previous Slot','WheelUp'],['drop','Drop Item','KeyX'],['map','Big Map','KeyM'],['score','Scoreboard','Tab'],['spec','Next Spectate Target','Mouse0'],
+ ['next','Next Slot','WheelDown'],['prev','Previous Slot','WheelUp'],['drop','Drop Item','KeyX'],['emote','Emote / Cancel','KeyG'],['build','Build Mode','KeyB'],['rotate','Rotate Piece','KeyT'],['matcycle','Cycle Material','KeyY'],['map','Big Map','KeyM'],['score','Scoreboard','Tab'],['spec','Next Spectate Target','Mouse0'],
 ];
 export const DEFAULT_SETTINGS={quality:'High',scale:100,res:'native',fov:92,fps:false,master:80,sfx:90,music:40,sens:1,camSens:1,adsSens:.7,invertY:false,crouchToggle:false,aimToggle:false,autoSprint:false,hitmarkers:true,dmgNumbers:true,shake:1,bob:1,mapRotate:true,dist:'Far',particles:'High',pix:'Slight',vib:132,bright:108,xcol:'#ffffff',xsize:1};
 export const POI_NAMES=[];

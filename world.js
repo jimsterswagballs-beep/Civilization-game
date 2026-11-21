@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {mulberry32,clamp,lerp} from './data.js';
+import {MATS} from './materials.js';
 export const ISL=300,HALF=430,WATER=0;
+const TREE_HP=100;const rockHp=sc=>Math.round(130+50*sc);
 export const ROADS=[[0,1],[0,2],[0,3],[0,4],[0,5],[0,6],[0,7],[2,5],[1,6],[3,7],[4,7],[0,8],[8,3],[8,7],[2,9],[9,12],[12,4],[0,12],[0,10],[10,1],[6,11],[11,3],[5,1]];
 export const POIS=[
  {n:'Downtown Dunk',x:0,z:0,r:58,type:'city'},
@@ -52,8 +54,16 @@ function gadd(ix,iz,o){const k=gk(ix,iz);let a=grid.get(k);if(!a){a=[];grid.set(
 function insertBox(b){const x0=Math.floor(b.x0/CELL),x1=Math.floor(b.x1/CELL),z0=Math.floor(b.z0/CELL),z1=Math.floor(b.z1/CELL);for(let i=x0;i<=x1;i++)for(let j=z0;j<=z1;j++)gadd(i,j,b)}
 function insertCircle(c){const x0=Math.floor((c.x-c.r)/CELL),x1=Math.floor((c.x+c.r)/CELL),z0=Math.floor((c.z-c.r)/CELL),z1=Math.floor((c.z+c.r)/CELL);for(let i=x0;i<=x1;i++)for(let j=z0;j<=z1;j++)gadd(i,j,c)}
 export function query(x,z,r,out){out.length=0;stamp++;const x0=Math.floor((x-r)/CELL),x1=Math.floor((x+r)/CELL),z0=Math.floor((z-r)/CELL),z1=Math.floor((z+r)/CELL);
- for(let i=x0;i<=x1;i++)for(let j=z0;j<=z1;j++){const a=grid.get(gk(i,j));if(!a)continue;for(let k=0;k<a.length;k++){const o=a[k];if(o._q!==stamp){o._q=stamp;out.push(o)}}}return out}
-function addBox(x0,y0,z0,x1,y1,z1,color,vis=true){const b={x0,y0,z0,x1,y1,z1,c:color,circ:false};boxes.push(b);insertBox(b);if(vis)boxVis.push(b);return b}
+ for(let i=x0;i<=x1;i++)for(let j=z0;j<=z1;j++){const a=grid.get(gk(i,j));if(!a)continue;for(let k=0;k<a.length;k++){const o=a[k];if(o._q!==stamp){o._q=stamp;if(!o.gone)out.push(o)}}}return out}
+// Destructible parts: every box added while `partMat` is set (building walls, roofs, props, boulders) gets hp.
+// Thin ground slabs (floors, paving) are shorter than .2 m and are never destructible.
+export const wparts=[];let partMat=null;
+const poiMat=t=>(t==='city'||t==='fort'||t==='diner')?'stone':(t==='base'||t==='warehouse')?'metal':'wood';
+export let boxInst=null; // instanced mesh of all visible static boxes, so a destroyed box can be hidden
+function addBox(x0,y0,z0,x1,y1,z1,color,vis=true){
+ const b={x0,y0,z0,x1,y1,z1,c:color,circ:false};
+ if(partMat&&y1-y0>=.2){b.pk='box';b.mat=partMat;b.hp=MATS[partMat].hp;b.maxHp=b.hp;b.wi=wparts.length;wparts.push(b)}
+ boxes.push(b);insertBox(b);if(vis){b.vi=boxVis.length;boxVis.push(b)}return b}
 function wallX(x0,x1,z,y0,H_,openings,color,th=.4){ // wall along x at z (thickness th)
  openings=openings.slice().sort((a,b)=>a.s-b.s);let cur=x0;
  for(const o of openings){if(o.s>cur)addBox(cur,y0,z-th/2,o.s,y0+H_,z+th/2,color);if(o.y0>0)addBox(o.s,y0,z-th/2,o.e,y0+o.y0,z+th/2,color);if(o.y1<H_)addBox(o.s,y0+o.y1,z-th/2,o.e,y0+H_,z+th/2,color);cur=o.e}
@@ -86,7 +96,8 @@ function makeBuilding(rng,cx,cz,w,d,h,doorSide,opts={}){
  return {x:cx,z:cz,w,d,y0,h,door:dd};
 }
 export const buildings=[];
-function genPOI(rng,p,idx){
+function genPOI(rng,p,idx){partMat=poiMat(p.type);try{genPOI_(rng,p,idx)}finally{partMat=null}}
+function genPOI_(rng,p,idx){
  const S={city:21,suburb:26,town:24,cabins:28,warehouse:32,base:30,fort:40}[p.type]||24;
  const dirTo=(bx,bz)=>{const dx=p.x-bx,dz=p.z-bz;if(Math.abs(dx)>Math.abs(dz))return dx>0?'e':'w';return dz>0?'s':'n'};
  if(p.type==='fort'){
@@ -149,12 +160,14 @@ function genPOI(rng,p,idx){
 export const landmarks=[];
 function addCyl(x,z,r,y0,y1){const c={x,z,r,y0,y1};insertCircle(c);circles.push(c);return c}
 const SIGN=(text,x,y,z,rot,w,h,bg,fg)=>landmarks.push({k:'sign',text,x,y,z,rot:rot||0,w,h,bg:bg||'#c0392b',fg:fg||'#fff'});
-function standSign(text,x,z,rot,w,h,bg,fg){const y=H(x,z);const c=Math.cos(rot),sn=Math.sin(rot);for(const o of[-w/2+.4,w/2-.4]){addBox(x+c*o-.2,y,z-sn*o-.2,x+c*o+.2,y+h+1.6,z-sn*o+.2,'#6b5a45')}SIGN(text,x,y+1.6+h/2,z,rot,w,h,bg,fg)}
+function standSign(text,x,z,rot,w,h,bg,fg){const pm=partMat;partMat=null;try{standSign_(text,x,z,rot,w,h,bg,fg)}finally{partMat=pm}}
+function standSign_(text,x,z,rot,w,h,bg,fg){const y=H(x,z);const c=Math.cos(rot),sn=Math.sin(rot);for(const o of[-w/2+.4,w/2-.4]){addBox(x+c*o-.2,y,z-sn*o-.2,x+c*o+.2,y+h+1.6,z-sn*o+.2,'#6b5a45')}SIGN(text,x,y+1.6+h/2,z,rot,w,h,bg,fg)}
 let built=false,treeList=[],rockList=[];
+export const decorInst={tree:[],rock:[]}; // instanced meshes + pristine matrices, so felled trees/rocks can be hidden and restored
 export function buildMap(){
  if(built)return;built=true;const rng=mulberry32(1337);
  POIS.forEach((p,i)=>genPOI(rng,p,i));
- POIS.forEach(p=>{if(p.type==='fort')return; for(let i=0;i<10;i++){const a=rng()*6.283,r=p.r*(.25+rng()*.7);const cx=p.x+Math.cos(a)*r,cz=p.z+Math.sin(a)*r;if(buildings.some(b=>Math.abs(cx-b.x)<b.w/2+2.5&&Math.abs(cz-b.z)<b.d/2+2.5))continue;const y=H(cx,cz);const sz=1.1+rng()*.9;const col=['#9b6a3a','#7a8a9a','#c0463a','#4a8a5a'][Math.floor(rng()*4)];addBox(cx-sz/2,y,cz-sz/2,cx+sz/2,y+sz,cz+sz/2,col);if(rng()<.4)addBox(cx-sz/3,y+sz,cz-sz/3,cx+sz/3,y+sz*1.6,cz+sz/3,col)}
+ POIS.forEach(p=>{if(p.type==='fort')return; for(let i=0;i<10;i++){const a=rng()*6.283,r=p.r*(.25+rng()*.7);const cx=p.x+Math.cos(a)*r,cz=p.z+Math.sin(a)*r;if(buildings.some(b=>Math.abs(cx-b.x)<b.w/2+2.5&&Math.abs(cz-b.z)<b.d/2+2.5))continue;const y=H(cx,cz);const sz=1.1+rng()*.9;const col=['#9b6a3a','#7a8a9a','#c0463a','#4a8a5a'][Math.floor(rng()*4)];partMat='stone';addBox(cx-sz/2,y,cz-sz/2,cx+sz/2,y+sz,cz+sz/2,col);if(rng()<.4)addBox(cx-sz/3,y+sz,cz-sz/3,cx+sz/3,y+sz*1.6,cz+sz/3,col);partMat=null}
 });
  // lighthouse on the coast
  {let lx=0,lz=0;const a=1.9;for(let r=340;r>120;r-=3){const x=Math.cos(a)*r,z=Math.sin(a)*r;if(H(x,z)>3.4){lx=x;lz=z;break}}const yy=H(lx,lz);addCyl(lx,lz,2.6,yy,yy+24);landmarks.push({k:'lighthouse',x:lx,y:yy,z:lz});lootSpots.push({x:lx+3.5,z:lz,y:yy+.1,inside:false,chest:true,q:1.8})}
@@ -166,9 +179,9 @@ export function buildMap(){
   const f=fbm(tx*.03+40,tz*.03+40);if(f<.46&&rng()<.85)continue;if(f<.52&&rng()<.5)continue;
   let bad=false;for(const p of POIS)if(Math.hypot(tx-p.x,tz-p.z)<p.r*(p.type==='cabins'?.55:1.12)){bad=true;break}if(bad)continue;
   const[gx,gz]=slope(tx,tz);if(Math.hypot(gx,gz)>.7)continue;
-  const sc=.8+rng()*.8;const c={x:tx,z:tz,r:.55*sc,y0:h,y1:h+9*sc,tree:true,sc,kind:rng()<.25?1:0};treeList.push(c);insertCircle(c);circles.push(c)}
+  const sc=.8+rng()*.8;const c={x:tx,z:tz,r:.55*sc,y0:h,y1:h+9*sc,tree:true,sc,kind:rng()<.25?1:0,pk:'tree',mat:'tree',hp:TREE_HP,maxHp:TREE_HP,idx:treeList.length};treeList.push(c);insertCircle(c);circles.push(c)}
  for(let i=0;i<160;i++){const a=rng()*6.283,r=Math.sqrt(rng())*ISL*.9;const x=Math.cos(a)*r,z=Math.sin(a)*r;const h=H(x,z);if(h<2.4)continue;let bad=false;for(const p of POIS)if(Math.hypot(x-p.x,z-p.z)<p.r*.9){bad=true;break}if(bad)continue;
-  const sc=1+rng()*2.2;const c={x,z,r:1.1*sc,y0:h-1,y1:h+1.3*sc,rock:true,sc,rot:rng()*6};rockList.push(c);insertCircle(c);circles.push(c)}
+  const sc=1+rng()*2.2;const c={x,z,r:1.1*sc,y0:h-1,y1:h+1.3*sc,rock:true,sc,rot:rng()*6,pk:'rock',mat:'rock',hp:rockHp(sc),maxHp:rockHp(sc),idx:rockList.length};rockList.push(c);insertCircle(c);circles.push(c)}
  // outdoor loot spots
  for(const p of POIS){for(let i=0;i<10;i++){const a=rng()*6.283,r=Math.sqrt(rng())*p.r*.9;lootSpots.push({x:p.x+Math.cos(a)*r,z:p.z+Math.sin(a)*r,y:0,inside:false,chest:false,q:.7})}}
  for(let i=0;i<70;i++){const a=rng()*6.283,r=Math.sqrt(rng())*ISL*.85;const x=Math.cos(a)*r,z=Math.sin(a)*r;if(H(x,z)<2.4)continue;lootSpots.push({x,z,y:0,inside:false,chest:false,q:.5})}
@@ -262,6 +275,7 @@ export function buildMeshes(scene,quality={}){
  const im=new THREE.InstancedMesh(bg,bm,boxVis.length);const m4=new THREE.Matrix4(),q=new THREE.Quaternion(),sc=new THREE.Vector3(),ps=new THREE.Vector3();
  boxVis.forEach((b,i)=>{ps.set((b.x0+b.x1)/2,(b.y0+b.y1)/2,(b.z0+b.z1)/2);sc.set(b.x1-b.x0,b.y1-b.y0,b.z1-b.z0);m4.compose(ps,q,sc);im.setMatrixAt(i,m4);im.setColorAt(i,c.set(b.c))});
  im.instanceMatrix.needsUpdate=true;im.instanceColor.needsUpdate=true;im.castShadow=im.receiveShadow=true;g.add(im);
+ boxInst={im,orig:im.instanceMatrix.array.slice()};
  // trees
  const trunkG=new THREE.CylinderGeometry(.22,.32,3,6);trunkG.translate(0,1.5,0);const crownG=new THREE.ConeGeometry(1.7,4.2,7);crownG.translate(0,5,0);const crown2=new THREE.ConeGeometry(1.2,3.2,7);crown2.translate(0,7.2,0);
  const tm=new THREE.InstancedMesh(trunkG,new THREE.MeshLambertMaterial({color:'#6b4a2b'}),treeList.length);
@@ -269,8 +283,10 @@ export function buildMeshes(scene,quality={}){
  const cm2=new THREE.InstancedMesh(crown2,new THREE.MeshLambertMaterial({color:0xffffff}),treeList.length);
  treeList.forEach((t,i)=>{ps.set(t.x,t.y0-.2,t.z);sc.set(t.sc,t.sc,t.sc);m4.compose(ps,q,sc);tm.setMatrixAt(i,m4);cm.setMatrixAt(i,m4);cm2.setMatrixAt(i,m4);const cc=t.kind?c.set('#3d7a44').offsetHSL(0,0,hash(i,5)*.06):c.set('#4f9a3a').offsetHSL(0,0,hash(i,9)*.08);cm.setColorAt(i,cc);cm2.setColorAt(i,cc)});
  [tm,cm,cm2].forEach(m=>{m.instanceMatrix.needsUpdate=true;m.castShadow=m.receiveShadow=true;g.add(m)});cm.instanceColor.needsUpdate=true;cm2.instanceColor.needsUpdate=true;
+ decorInst.tree=[tm,cm,cm2].map(m=>({m,orig:m.instanceMatrix.array.slice()}));
  const rm=new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1,0),new THREE.MeshLambertMaterial({color:'#8a8a85',flatShading:true}),rockList.length);
  rockList.forEach((r,i)=>{ps.set(r.x,r.y0+r.sc*.4,r.z);q.setFromEuler(new THREE.Euler(r.rot,r.rot*2,0));sc.set(r.r*1.05,r.sc*.8,r.r*1.05);m4.compose(ps,q,sc);rm.setMatrixAt(i,m4)});q.identity();rm.castShadow=rm.receiveShadow=true;g.add(rm);
+ decorInst.rock=[{m:rm,orig:rm.instanceMatrix.array.slice()}];
  // clouds
  const cg=new THREE.BoxGeometry(1,1,1),cmat=new THREE.MeshBasicMaterial({color:'#fff',transparent:true,opacity:.85,fog:false});const clouds=new THREE.InstancedMesh(cg,cmat,24);
  const r2=mulberry32(5);for(let i=0;i<24;i++){ps.set((r2()-.5)*1400,170+r2()*60,(r2()-.5)*1400);sc.set(60+r2()*80,10+r2()*8,30+r2()*40);m4.compose(ps,q,sc);clouds.setMatrixAt(i,m4)}g.add(clouds);
@@ -302,3 +318,27 @@ export function addDecor(scene){
  }
  return {update(t){for(const a of anim)a(t)}}
 }
+
+// ---------------- building support
+// runtime solids (player-built pieces). Removed boxes keep a `gone` flag so grid cells that still list them skip them.
+export function addSolid(b){b.circ=false;b.gone=false;boxes.push(b);insertBox(b);return b}
+export function removeSolid(b){b.gone=true;const i=boxes.indexOf(b);if(i>=0)boxes.splice(i,1)}
+// hide a destroyed static box's instance (zero matrix)
+export function hideBox(b){if(!boxInst||b.vi===undefined)return;boxInst.im.instanceMatrix.array.fill(0,b.vi*16,b.vi*16+16);boxInst.im.instanceMatrix.needsUpdate=true}
+// true if the axis-aligned box overlaps any solid (static boxes, cylinders, pieces)
+export function overlapsSolid(x0,y0,z0,x1,y1,z1){
+ const cx=(x0+x1)/2,cz=(z0+z1)/2,r=Math.max(x1-x0,z1-z0)/2+1;query(cx,cz,r,_b);
+ for(let i=0;i<_b.length;i++){const b=_b[i];
+  if(b.circ===false){if(x1>b.x0&&x0<b.x1&&z1>b.z0&&z0<b.z1&&y1>b.y0&&y0<b.y1)return true}
+  else{const nx=Math.max(x0,Math.min(b.x,x1)),nz=Math.max(z0,Math.min(b.z,z1));if((nx-b.x)**2+(nz-b.z)**2<b.r*b.r&&y1>b.y0&&y0<b.y1)return true}}
+ return false}
+// hide a tree or rock: zero its instance matrices and drop its collider
+export function removeDecor(kind,c){
+ if(!c||c.gone)return;c.gone=true;const arr=kind==='tree'?treeList:rockList;const i=arr.indexOf(c);if(i<0)return;
+ for(const d of decorInst[kind]){d.m.instanceMatrix.array.fill(0,i*16,i*16+16);d.m.instanceMatrix.needsUpdate=true}}
+// put every felled tree and rock back (between matches)
+export function restoreDecor(){
+ for(const kind of['tree','rock'])for(const d of decorInst[kind]){d.m.instanceMatrix.array.set(d.orig);d.m.instanceMatrix.needsUpdate=true}
+ for(const c of[...treeList,...rockList]){c.gone=false;c.dead=false;c.hp=c.maxHp}
+ for(const b of wparts){if(b.gone){b.gone=false;boxes.push(b)}b.dead=false;b.hp=b.maxHp}
+ if(boxInst){boxInst.im.instanceMatrix.array.set(boxInst.orig);boxInst.im.instanceMatrix.needsUpdate=true}}

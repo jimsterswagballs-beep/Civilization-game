@@ -1,10 +1,11 @@
 import * as THREE from 'three';
-import {WEAPONS,ITEMS,RARITY,AMMO,clamp,lerp} from './data.js';
+import {WEAPONS,ITEMS,RARITY,AMMO,BAL,clamp,lerp} from './data.js';
 import * as W from './world.js';
 import * as NAV from './botnav.js';
 import {R,HSTAND,HCROUCH,wstat,angDiff,lerpAng} from './shared.js';
 import {itemName} from './loot.js';
 import {PERSONA_WEIGHTS} from './botnames.js';
+import {REVIVE_RANGE} from './knock.js';
 
 // ---------------------------------------------------------------------------------------------
 // Difficulty: reaction/aim/turn speed plus perception (vis = sight range, fov = field of view in degrees,
@@ -66,7 +67,7 @@ export const botMethods={
   e.persona=key},
  botCfg(){return DIFF[this.diff]||DIFF.Normal},
  inZoneAt(x,z,m=0){const s=this.storm;if(Math.hypot(x-s.cx,z-s.cz)>s.r-m)return false;const nz=this.nextZone();if(nz&&Math.hypot(x-nz.x,z-nz.z)>nz.r-m)return false;return true},
- onBotHit(t,by){const ai=t.ai;if(!ai||!by||by===t||!by.alive)return;
+ onBotHit(t,by){const ai=t.ai;if(!ai||!by||by===t||!by.alive||this.isAlly(t,by))return;
   ai.hitN=(this.t-ai.hitT<4?ai.hitN:0)+1;ai.hitT=this.t;ai.lastSeenPos={x:by.pos.x,z:by.pos.z,t:this.t};ai.lastSeenT=this.t;
   if(!ai.enemy||Math.random()<.5){ai.enemy=by;ai.react=Math.min(ai.react||0,.25);ai.seen=0}
   ai.glance={x:by.pos.x,z:by.pos.z,t:this.t}},
@@ -78,7 +79,7 @@ export const botMethods={
   else if(ev.k==='ex'){for(const b of this.list){if(!b.bot||!b.alive||b.drop)continue;const d=Math.hypot(b.pos.x-ev.x,b.pos.z-ev.z);if(d<130*b.ai.p.hear){b.ai.noise={x:ev.x+rr(-6,6),z:ev.z+rr(-6,6),t:this.t,d,src:-1};b.ai.glance={x:ev.x,z:ev.z,t:this.t}}}}},
  updateBots(dt){
   NAV.navTime(this.t);this.navMs=0;
-  for(const e of this.list){if(!e.bot||!e.alive)continue;this.botTick(e,dt)}
+  for(const e of this.list){if(!e.bot||!e.alive||e.knocked)continue;this.botTick(e,dt)}
   this.updateLootHost(dt);
  },
  // ------------------------------------------------------------------ helpers
@@ -180,9 +181,12 @@ export const botMethods={
    const dx=ai.dropTgt.x-e.pos.x,dz=ai.dropTgt.z-e.pos.z;e.yaw=Math.atan2(-dx,-dz);e.pitch=-.9;inp.f=1;
    this.move(e,inp,dt);e.flags=this.packFlags(e);e.wi=-1;if(!e.drop){ai.state='loot';ai.think=0;ai.lastX=P.x;ai.lastZ=P.z}return}
   ai.think-=dt;ai.slideCd-=dt;ai.strafeT-=dt;ai.jumpT-=dt;ai.modeT+=dt;
-  if(ai.think<=0){ai.think=rr(.15,.25);this.botThink(e,cfg)}
+  if(ai.think<=0){ai.think=rr(.15,.25);this.botThink(e,cfg);this.botSupport(e)}
   const mode=ai.mode;
   const en=ai.fight&&ai.enemy&&ai.enemy.alive&&ai.seen>0?ai.enemy:null;
+  // revive: hold interact while within reach of the knocked teammate (tickKnock reads holdI on the host)
+  const rk=mode==='revive'?ai.kmate:null;
+  e.holdI=!!(rk&&rk.knocked&&rk.alive&&!en&&d2(P.x,P.z,rk.pos.x,rk.pos.z)<REVIVE_RANGE-.4&&Math.abs(P.y-rk.pos.y)<2.5);
   const nz=this.nextZone()||{x:this.storm.cx,z:this.storm.cz,r:this.storm.r};
   const outside=!this.inZoneAt(P.x,P.z,6);
   const hh=(e.crouch||e.sliding)?HCROUCH:HSTAND;
@@ -298,13 +302,16 @@ export const botMethods={
    // abilities
    if(ai.react<=0&&Math.random()<dt*cfg.ab*1.4*pe.ab){const id=e.cdef.id;
     if(id==='coolguy15'){if(look.d<11&&e.cd[0]<=0&&e.grounded)this.useAbility(e,0);else if(look.d<45&&e.cd[1]<=0&&e.fireCd<.3)this.useAbility(e,1);else if(look.d<12&&e.cd[2]<=0&&(e.hp<e.maxHp*.5||mode==='flee'))this.useAbility(e,2)}
+    else if(id==='chillguy')this.botChill(e,look.d);
+    else if(id==='jay')this.botJay(e,look.d);
     else{if(look.d<7.5&&e.cd[1]<=0&&e.grounded)this.useAbility(e,1);else if(look.d<40&&e.cd[2]<=0)this.useAbility(e,2);else if(e.hp<e.maxHp*.55&&look.d>25&&e.cd[0]<=0)this.useAbility(e,0)}}
   }else{
    const slot=e.inv[e.cur];if(slot&&slot.k==='w'){const wd=wstat(slot.w,slot.r);if(!wd.melee&&slot.mag<wd.mag*.6&&e.ammo[wd.ammo]>0)c.reload=true}
    if(ai.healing){const s=e.inv[e.cur];if(s&&s.k==='i'){c.firePressed=true;c.fire=true}else ai.healing=false}
    // fleeing / hiding bots use their survival abilities
    if(!ai.healing&&(mode==='flee'||mode==='hide')&&e.cdef.id==='zach'){if(e.hp<e.maxHp*.7&&e.cd[0]<=0&&!ai.fight)this.useAbility(e,0);else if(mode==='flee'&&e.cd[2]<=0&&Math.random()<dt*2)this.useAbility(e,2)}
-   if(!ai.healing&&mode!=='flee'&&mode!=='hide'&&e.hp<e.maxHp*.7&&e.cdef.id==='zach'&&e.cd[0]<=0&&!ai.fight)this.useAbility(e,0)}
+   if(!ai.healing&&mode!=='flee'&&mode!=='hide'&&e.hp<e.maxHp*.7&&e.cdef.id==='zach'&&e.cd[0]<=0&&!ai.fight)this.useAbility(e,0);
+   if(e.cdef.id==='jay'&&e.hp<e.maxHp*.65&&e.cd[2]<=0&&e.grounded)this.useAbility(e,2)}
   if(e.use&&en&&ai.seen>0&&e.use.t>.6){c.cancel=true;ai.healing=false}
   this.move(e,inp,dt);this.tickWeapon(e,c,dt);
   e.wi=(e.inv[e.cur]&&e.inv[e.cur].k==='w')?e.inv[e.cur].w*10+e.inv[e.cur].r:-1;e.flags=this.packFlags(e);
@@ -314,20 +321,57 @@ export const botMethods={
   const ai=e.ai,P=e.pos,t=this.t,pe=ai.p;let best=null,bd=1e9,heard=null,hd=1e9;
   const fx=-Math.sin(e.yaw),fz=-Math.cos(e.yaw);const half=Math.cos(cfg.fov*(pe.paranoid?1.15:1)*Math.PI/360);
   for(const o of this.list){
-   if(o===e||!o.alive||o.drop==='bus'||(o.drop&&o.pos.y>P.y+30))continue;
+   if(o===e||this.isAlly(e,o)||!o.alive||o.drop==='bus'||(o.drop&&o.pos.y>P.y+30))continue;
    const dx=o.pos.x-P.x,dz=o.pos.z-P.z,d=Math.hypot(dx,dz);
-   const vis=cfg.vis*(o.sprinting?1.2:1)*(o.crouch?.7:1);
+   let vis=cfg.vis*(o.sprinting?1.2:1)*(o.crouch?.7:1)*(o.char==='chillguy'?BAL.chill.quiet.botVisMul:1);if(o.cloakT>0)vis=Math.min(vis,BAL.chill.disappear.botSeeRange);
    let seen=false;
    if(d<=vis){const dot=d<.01?1:(dx*fx+dz*fz)/d;if((d<10||dot>half||t-(o.lastShotAt||-99)<1.2)&&d<bd&&W.losClear(P.x,eye,P.z,o.pos.x,o.pos.y+1.2,o.pos.z)){bd=d;best=o;seen=true}}
    if(!seen){const loud=(t-(o.lastShotAt||-99)<2.5)?55:(o.sprinting?1:o.crouch?.2:.5)*cfg.hear;const hr=loud*pe.hear;
     if(d<hr&&d<hd){hd=d;heard={x:o.pos.x+rr(-3,3),z:o.pos.z+rr(-3,3),d,t,src:o.id}}}}
   return{best,bd,heard}},
  // ------------------------------------------------------------------ decision making
+ // ---------------------------------------------------------------- team play
+ // team modes: the nearest knocked teammate within 60 m (a bot goes to revive them)
+ knockedMate(e){if(!this.teamMode)return null;let best=null,bd=60;for(const o of this.list){if(o===e||!o.knocked||!o.alive||o.team!==e.team)continue;const q=d2(o.pos.x,o.pos.z,e.pos.x,e.pos.z);if(q<bd){bd=q;best=o}}return best},
+ nearestMate(e){let mate=null,d=1e9;for(const o of this.list){if(o===e||!o.alive||o.knocked||o.drop||o.team!==e.team)continue;const q=d2(o.pos.x,o.pos.z,e.pos.x,e.pos.z);if(q<d){d=q;mate=o}}return{mate,d}},
+ healSlot(e){for(let i=1;i<6;i++){const s=e.inv[i];if(s&&s.k==='i'&&(ITEMS[s.id].kind==='heal'||s.id==='chug'))return i}return -1},
+ // an ammo type this bot can spare for a teammate who carries a gun of that type but is nearly out
+ ammoGift(e,o){for(const s of o.inv){if(!s||s.k!=='w'||s.w<=0)continue;const k=WEAPONS[s.w].ammo;if(o.ammo[k]<20&&e.ammo[k]>=60)return k}return null},
+ // the teammate this bot should help now: a hurt one (if we can spare a heal) or one short on ammo
+ supportNeed(e){
+  let best=null,bs=0;
+  for(const o of this.list){
+   if(o===e||!o.alive||o.knocked||o.drop||o.team!==e.team)continue;
+   if(d2(o.pos.x,o.pos.z,e.pos.x,e.pos.z)>45)continue;
+   let s=0;
+   if(o.hp<o.maxHp*.45&&this.healSlot(e)>=0&&e.hp>=e.maxHp*.5)s=2+(1-o.hp/o.maxHp);
+   else if(this.ammoGift(e,o))s=1;
+   if(s>bs){bs=s;best={mate:o,kind:s>=2?'heal':'ammo'}}
+  }
+  return best;
+ },
+ // hands the item over once the bot is next to the teammate (host side; bots only run on the host)
+ botSupport(e){
+  const ai=e.ai,sup=ai.support;if(!sup)return;
+  const o=sup.mate;if(!o||!o.alive){ai.support=null;return}
+  if(d2(o.pos.x,o.pos.z,e.pos.x,e.pos.z)>3.2)return;
+  if(sup.kind==='heal'){
+   const i=this.healSlot(e);if(i<0||o.hp>=o.maxHp*.45){ai.support=null;return}
+   const s=e.inv[i],it=ITEMS[s.id];this.consume(e,s);
+   const amt=Math.max(0,Math.min(it.hp||40,o.maxHp-o.hp));
+   this.healEnt(o,amt,0);this.emit({k:'heal',t:o.id,hp:amt});
+  }else{
+   const k=this.ammoGift(e,o);if(k){const n=Math.min(30,e.ammo[k]-30);if(n>0){e.ammo[k]-=n;o.ammo[k]+=n}}
+  }
+  ai.support=null;
+ },
  botThink(e,cfg){
   const ai=e.ai,pe=ai.p,P=e.pos,t=this.t;
   const eye=this.eyeOf(e);
   const low=(e.hp+e.sh*.6)/e.maxHp;                 // 0..~1.6 ; shields count for a bit
   const {best,bd,heard}=this.botSense(e,cfg,eye);
+  const near=this.nearestMate(e),sup=best?null:this.supportNeed(e);ai.support=sup;
+  const kmate=best?null:this.knockedMate(e);ai.kmate=kmate;
   const hitRecent=t-ai.hitT<4;
   if(best){if(ai.enemy!==best||ai.seen<=0)ai.react=cfg.react*(.7+Math.random()*.6)*pe.twitchy;ai.enemy=best;ai.seen=1;ai.lastSeenPos={x:best.pos.x,z:best.pos.z,t};ai.lastSeenT=t}
   else{if(ai.seen>0)ai.seen-=.34;if(ai.seen<=0&&!hitRecent&&t-ai.lastSeenT>pe.chase+3)ai.enemy=null}
@@ -374,14 +418,17 @@ export const botMethods={
    const sinceSeen=t-ai.lastSeenT;
    const hurt=low<pe.hideHp;const haveHeal=e.inv.some(s=>s&&s.k==='i'&&(ITEMS[s.id].kind==='heal'||ITEMS[s.id].kind==='shield'||s.id==='chug'));
    if(ai.mode==='fight'||ai.mode==='flee')ai.cornered=false;
-   if(outside&&!(ai.mode==='fight'&&ai.seen>0))next='rotate';
+   if(kmate&&!hitRecent&&!outside&&low>pe.fleeHp)next='revive';
+   else if(outside&&!(ai.mode==='fight'&&ai.seen>0))next='rotate';
    else if(hurt&&(sinceSeen<14||haveHeal||pe.caution>.5)&&(ai.mode==='hide'?t-ai.hideT0<28:true)&&!(outside)){next='hide'}
    else if(ai.mode==='hide'&&!hurt&&!ai.healing){next='loot'}
+   else if(sup){next='regroup'}
    else if(noise&&armed&&low>pe.fleeHp+.25&&Math.random()<pe.aggr*pe.hear*.12+(pe.key==='opportunist'?.1:0)&&ai.mode!=='camp'){next='investigate'}
    else if(ai.mode==='investigate'&&noise&&t<ai.noiseUntil){next='investigate'}
    else if(ai.lastSeenPos&&sinceSeen<pe.chase&&pe.aggr>.45&&armed&&low>pe.fleeHp+.12&&ai.enemy&&ai.enemy.alive&&ai.mode!=='hide'){next='chase'}
    else if(ai.mode==='camp'&&ai.hold&&t<ai.hold.until&&!outside){next='camp'}
    else if(this.botWantsCamp(e,low,armed,outside)){next='camp'}
+   else if(near.mate&&near.d>(ai.mode==='regroup'?144:576)){next='regroup'}
    else next=this.botLootOrRoam(e)?'loot':'roam';
    if(ai.mode==='chase'&&next==='chase'&&ai.searchT&&t>ai.searchT){next=this.botLootOrRoam(e)?'loot':'roam';ai.lastSeenPos=null}
    if(ai.mode==='investigate'&&next==='investigate'&&ai.searchT&&t>ai.searchT){ai.noise=null;next=this.botLootOrRoam(e)?'loot':'roam'}
@@ -422,6 +469,12 @@ export const botMethods={
     break}
    case'chase':{const p=ai.lastSeenPos;if(p)this.setGoal(e,p.x,p.z,3,'chase');break}
    case'investigate':{if(noise){if(!ai.noiseUntil||t>ai.noiseUntil)ai.noiseUntil=t+12;this.setGoal(e,noise.x,noise.z,5,'investigate')}else this.setMode(e,'roam',0);break}
+   case'revive':{const k=ai.kmate;if(!k||!k.knocked||!k.alive){this.setMode(e,'loot',0);break}
+    if(!ai.goal||ai.goal.why!=='revive'||t-(ai.reviveAt||0)>1.5){ai.reviveAt=t;this.setGoal(e,k.pos.x,k.pos.z,1.2,'revive')}
+    break}
+   case'regroup':{const tm=sup?sup.mate:near.mate;if(!tm){this.setMode(e,'loot',0);break}
+    if(!ai.goal||ai.goal.why!=='regroup'||t-(ai.regroupAt||0)>1.5){ai.regroupAt=t;const a=rr(0,6.283),r=sup?1.2:rr(3,5);this.setGoal(e,tm.pos.x+Math.cos(a)*r,tm.pos.z+Math.sin(a)*r,2,'regroup')}
+    break}
    case'rotate':{const a=Math.atan2(P.z-nz0(this).z,P.x-nz0(this).x);const z=nz0(this);const k=Math.max(4,z.r*.55);this.setGoal(e,z.x+Math.cos(a)*k*.5,z.z+Math.sin(a)*k*.5,4,'rotate');break}
    case'loot':{if(ai.lootT&&this.loot.has(ai.lootT.id)){const l=ai.lootT;this.setGoal(e,l.x,l.z,1.6,'loot')}else{ai.lootT=null;this.setMode(e,'roam',0)}break}
    case'roam':{
@@ -474,6 +527,7 @@ export const botMethods={
    if(l.chest)v=(l.supply?90:55)*pe.greed;else if(l.ammobox)v=Object.values(need).some(n=>n>0)?28:8;
    else{const it=l.item;if(it.k==='w'){const wd=WEAPONS[it.w];if(wd.melee)continue;const have=e.inv.some(s=>s&&s.k==='w'&&s.w===it.w&&s.r>=it.r);if(have)continue;v=(wc<3?40:12)+it.r*14;if(wc>=3){const worst=Math.min(...e.inv.filter(s=>s&&s.k==='w'&&s.w>0).map(s=>s.r));if(it.r<=worst)continue}}
     else if(it.k==='a'){if(!(need[it.t]>0))continue;v=25}
+    else if(it.k==='m'){v=20}
     else{const d2_=ITEMS[it.id];v=d2_.kind==='heal'||d2_.kind==='shield'||d2_.kind==='chug'?(hc<4?22:6):(hc<5?12:3);if(it.id==='chug')v=30}}
    const sc=v-d*.55;if(sc>bs){bs=sc;best=l}}
   return best}

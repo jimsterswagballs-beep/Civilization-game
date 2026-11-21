@@ -7,7 +7,7 @@ const result = await esbuild.build({
   minify: true,
   format: 'iife',
   platform: 'browser',
-  loader: { '.png': 'dataurl' },
+  loader: { '.png': 'dataurl', '.mp3': 'dataurl', '.mp4': 'dataurl' },
   write: false,
   target: 'es2020',
   logLevel: 'warning'
@@ -17,6 +17,4 @@ const css = fs.readFileSync('style.css', 'utf8');
 let html = fs.readFileSync('template.html', 'utf8');
 html = html.replace('/*CSS*/', () => css).replace('/*JS*/', () => js);
 fs.writeFileSync('index.html', html);
-fs.mkdirSync('dist', { recursive: true });
-fs.writeFileSync('dist/index.html', html);
 console.log('Built index.html (' + (html.length / 1024 / 1024).toFixed(2) + ' MB)');

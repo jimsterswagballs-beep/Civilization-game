@@ -1,13 +1,17 @@
 import * as THREE from 'three';
-import {WEAPONS,ITEMS,RARITY,CHARS,AMMO,mulberry32,clamp,lerp} from './data.js';
+import {WEAPONS,ITEMS,RARITY,CHARS,AMMO,BAL,mulberry32,clamp,lerp} from './data.js';
+import {heroMethods,makeChefHat} from './abilities.js';
 import * as W from './world.js';
 import {FX} from './fx.js';
+import {emoteMethods} from './emote.js';
 import {R,HSTAND,HCROUCH,EYE,EYEC,EYES,charTex,wstat,makeWeaponModel,mat,angDiff,lerpAng,crispMat,makeBusModel} from './shared.js';
 import {movementMethods} from './movement.js';
+import {knockMethods} from './knock.js';
 import {combatMethods} from './combat.js';
 import {lootMethods} from './loot.js';
 import {botMethods} from './bots.js';
 import {netMethods} from './netsync.js';
+import {structMethods} from './structures.js';
 
 export const PHASES=[{wait:35,shrink:30,r:235,dmg:1},{wait:28,shrink:26,r:155,dmg:2},{wait:24,shrink:22,r:95,dmg:4},{wait:20,shrink:18,r:52,dmg:6},{wait:15,shrink:15,r:22,dmg:8},{wait:10,shrink:14,r:0,dmg:10}];
 const SKY_V=`varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
@@ -25,6 +29,21 @@ function updateSun(g,cam){
  const pr=tx*Rx+tz*Rz,pu=tx*Ux+ty*Uy+tz*Uz,dr=Math.round(pr/ts)*ts-pr,du=Math.round(pu/ts)*ts-pu;
  tx+=Rx*dr+Ux*du;ty+=Uy*du;tz+=Rz*dr+Uz*du;
  sun.target.position.set(tx,ty,tz);sun.position.set(tx+L.x*300,ty+L.y*300,tz+L.z*300);sun.target.updateMatrixWorld()}
+// Glider canopy with strings to the hero's shoulders. Shown while gliding (drop === 'glide').
+function makeGliderModel(col){
+ const g=new THREE.Group();
+ const shape=new THREE.Shape();shape.moveTo(-2.3,0);shape.absarc(0,0,2.3,Math.PI,0,true);shape.lineTo(-2.3,0);
+ const canopyGeo=new THREE.ExtrudeGeometry(shape,{depth:.12,bevelEnabled:false,curveSegments:24});canopyGeo.translate(0,0,-.06);
+ const canopy=new THREE.Mesh(canopyGeo,new THREE.MeshLambertMaterial({color:col,side:THREE.DoubleSide}));canopy.castShadow=true;g.add(canopy);
+ const stripeMat=new THREE.MeshLambertMaterial({color:'#ffffff',transparent:true,opacity:.55});
+ for(const a of[-.9,-.3,.3,.9]){const st=new THREE.Mesh(new THREE.BoxGeometry(.07,2.2,.16),stripeMat);st.position.y=1.1;const piv=new THREE.Group();piv.rotation.z=a;piv.add(st);g.add(piv)}
+ const pts=[[-2.3,0],[2.3,0],[-1.63,1.63],[1.63,1.63]],v=[];
+ for(const[x,y]of pts)v.push(x,y,0,x>0?.2:-.2,-1.4,0);
+ const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.Float32BufferAttribute(v,3));
+ g.add(new THREE.LineSegments(sg,new THREE.LineBasicMaterial({color:'#222222'})));
+ g.position.y=3.1;
+ return g}
+
 export class Game{
  constructor(app){
   this.app=app;this.renderer=app.renderer;this.input=app.input;this.audio=app.audio;this.hud=app.hud;
@@ -37,24 +56,30 @@ export class Game{
   sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);{const sc=sun.shadow.camera;sc.left=-SHADOW_R;sc.right=SHADOW_R;sc.top=SHADOW_R;sc.bottom=-SHADOW_R;sc.near=1;sc.far=700;sc.updateProjectionMatrix()}sun.shadow.bias=-.0005;sun.shadow.normalBias=.5;
   this.vmScene=new THREE.Scene();this.vmCam=new THREE.PerspectiveCamera(58,1,.02,10);this.vmScene.add(new THREE.HemisphereLight('#fff','#778',1.4));const vs=new THREE.DirectionalLight('#fff',1.2);vs.position.set(1,2,1);this.vmScene.add(vs);
   this.fx=new FX(this.scene);this.fx.cam=this.camera;this.worldBuilt=false;this.running=false;this.dynamic=new THREE.Group();this.scene.add(this.dynamic);
-  this.ents=new Map();this.list=[];this.loot=new Map();this.traps=new Map();this.projs=[];this.pvis=new Map();this.outEvents=[];this.tmpV=new THREE.Vector3();
+  this.ents=new Map();this.list=[];this.loot=new Map();this.traps=new Map();this.strikes=[];this.projs=[];this.pvis=new Map();this.outEvents=[];this.tmpV=new THREE.Vector3();
   this.view={recoilP:0,recoilY:0,kick:0,shake:0,bobT:0,eye:EYE,roll:0,fov:92,adsK:0,equipK:1,reloadK:0,sway:0,flash:0,hitK:0,burgerT:0};
-  this.accum={net:0,snap:0,think:0,loot:0,hud:0,ev:0};this.kills=[];this.spectateId=-1;this.winnerId=null;
+  this.vfxInit();this.accum={net:0,snap:0,think:0,loot:0,hud:0,ev:0};this.kills=[];this.spectateId=-1;this.winnerId=null;
  }
  ensureWorld(){if(!this.worldBuilt){W.buildMap();this.world=W.buildMeshes(this.scene);this.decor=W.addDecor(this.scene);this.worldBuilt=true}}
  renderMenu(dt){this.menuT=(this.menuT||0)+dt;if(this.decor)this.decor.update(this.menuT);const a=this.menuT*.06,cam=this.camera;cam.position.set(Math.cos(a)*270,95+Math.sin(a*2)*15,Math.sin(a)*270);cam.lookAt(0,8,0);cam.fov=60;cam.updateProjectionMatrix();this.sky.position.copy(cam.position);updateSun(this,{position:{x:0,y:8,z:0}});this.scene.fog.color.set('#b9dcf5');if(this.worldBuilt)this.world.water.position.y=Math.sin(this.menuT*.8)*.08;this.renderWorld(cam)}
- peerLeft(pid){const e=this.list.find(x=>x.peer===pid);if(!e)return;e.peer=undefined;if(e.alive){e.bot=true;this.initBot(e);e.ai.state='loot';e.name+=' (bot)'}}
+ // a human left mid-match: their team is told (team modes), then a bot takes over if they were still alive
+ peerLeft(pid){const e=this.list.find(x=>x.peer===pid);if(!e)return;e.peer=undefined;
+  if(this.teamMode&&e.alive)this.emit({k:'ntf',tm:e.team,c:'#ffd27a',t:`${e.name} left the match, a bot is taking over`});
+  if(e.alive){e.bot=true;this.initBot(e);e.ai.state='loot';e.name+=' (bot)'}}
  get settings(){return this.app.settings}
  get me(){return this.ents.get(this.myId)}
  cleanup(){
+  if(this.fieldMeshes)for(const m of this.fieldMeshes.values())this.dynamic.remove(m);
   for(const e of this.list){if(e.spr)this.dynamic.remove(e.spr.group)}
   for(const l of this.loot.values())if(l.mesh)this.dynamic.remove(l.mesh);
   for(const t of this.traps.values())if(t.mesh)this.dynamic.remove(t.mesh);
   for(const p of this.pvis.values())this.dynamic.remove(p.mesh);
+  this.clearStructures();
   if(this.busMesh){this.dynamic.remove(this.busMesh);this.busMesh=null}
   if(this.stormMesh){this.dynamic.remove(this.stormMesh);this.stormMesh=null}
   if(this.vmModel){this.vmScene.remove(this.vmModel);this.vmModel=null}
-  this.ents.clear();this.list=[];this.loot.clear();this.traps.clear();this.projs=[];this.pvis.clear();this.outEvents=[];
+  this.vfxCleanup();
+  this.ents.clear();this.list=[];this.loot.clear();this.traps.clear();this.strikes=[];this.projs=[];this.pvis.clear();this.outEvents=[];
  }
  start(cfg){
   this.cleanup();this.role=cfg.role;this.net=cfg.net;this.myId=cfg.myId;this.seed=cfg.seed;this.diff=cfg.diff||'Normal';
@@ -67,10 +92,10 @@ export class Game{
   this.busPos(0);
   {const bm=makeBusModel();this.busMesh=bm.group;this.busProp=bm.prop;this.dynamic.add(this.busMesh)}
   for(const info of cfg.ents)this.makeEnt(info);
-  this.t=0;this.state='bus';this.winnerId=null;this.spectateId=-1;this.over=false;this.kills=[];this.nextLootId=1000000;this.nextProjId=1;this.nextTrapId=1;
+  this.t=0;this.tokensPaid=false;this.deathT=0;this.state='bus';this.winnerId=null;this.spectateId=-1;this.over=false;this.kills=[];this.nextLootId=1000000;this.nextProjId=1;this.nextTrapId=1;
   this.storm={phase:-1,state:'idle',t:25,cx:0,cz:0,r:480,ocx:0,ocz:0,or:480,tcx:0,tcz:0,tr:480,dmg:0};
   this.supplyT=45;this.supplies=[];
-  this.genLoot(mulberry32(this.seed+99));
+  this.genLoot(mulberry32(this.seed+99));this.setupFields();
   this.initStormMesh();
   this.me.pos.copy(this.bus.pos);
   this.view.recoilP=this.view.recoilY=0;this.running=true;this.audio.mode='game';
@@ -86,8 +111,10 @@ export class Game{
    inv:[{k:'w',w:0,r:0,mag:0},null,null,null,null,null],cur:0,ammo:{light:0,med:0,shells:0,heavy:0,rockets:0},
    fireCd:0,reload:0,equipT:0,use:null,stun:0,slip:0,dance:0,dazed:0,eatT:0,auraT:0,buffT:0,cd:[0,0,0],dash:null,grap:null,slamming:false,
    hitT:0,shootT:0,landT:0,walkT:0,lastHit:-99,lastBy:-1,padCd:0,airCap:0,wi:-1,bloom:0,deadT:0,spawnT:0,
+   cloakT:0,coldT:0,slowT:0,cookT:0,energyT:0,spicyT:0,jetFuel:0,slowK:.4,coldUntil:0,noCloakUntil:0,slipImm:0,abNext:[0,0,0],anim:'',animT:0,animDur:0,foodBag:null,team:info.team!==undefined?info.team:info.id,
    tgt:{x:0,y:0,z:0,yaw:0,pitch:0},jumpHeld:false,prevFire:false,prevCrouch:false,prevJump:false};
   e.pos.copy(this.bus.pos);e.rpos.copy(e.pos);
+  if(c.id==='jay')e.foodBag=this.shuffledFoods();
   this.ents.set(e.id,e);this.list.push(e);this.makeSprite(e);
   if(e.bot)this.initBot(e,info);
   return e}
@@ -98,10 +125,12 @@ export class Game{
   const plane=new THREE.Mesh(geo,m);plane.position.y=.88;plane.layers.set(1);pivot.add(plane);
   const sh=new THREE.Mesh(new THREE.CircleGeometry(.7,16),new THREE.MeshBasicMaterial({color:0,transparent:true,opacity:.32,depthWrite:false}));sh.rotation.x=-Math.PI/2;sh.position.y=.05;g.add(sh);
   const wg=new THREE.Group();g.add(wg);
+  let hat=null;if(e.char==='jay'){hat=makeChefHat();hat.position.y=1.95;pivot.add(hat)}
   const aura=new THREE.Mesh(new THREE.SphereGeometry(1.25,16,12),new THREE.MeshBasicMaterial({color:'#6ec6ff',transparent:true,opacity:.28,blending:THREE.AdditiveBlending,depthWrite:false}));aura.position.y=1;aura.visible=false;g.add(aura);
   const cv=document.createElement('canvas');cv.width=256;cv.height=64;const tex=new THREE.CanvasTexture(cv);tex.colorSpace=THREE.SRGBColorSpace;
   const nmat=crispMat(tex);const name=new THREE.Mesh(new THREE.PlaneGeometry(1,1),nmat);name.scale.set(2.8,.7,1);name.position.y=2.45;name.layers.set(1);bb.add(name);
-  e.spr={group:g,bb,pivot,plane,mat:m,nmat,shadow:sh,wg,aura,name,cv,tex,view:'front',wKey:-1,wModel:null,hpKey:-1,flip:1};
+  const glider=makeGliderModel((CHARS.find(c=>c.id===e.char)||{}).color||'#6ec6ff');glider.visible=false;g.add(glider);
+  e.spr={group:g,bb,pivot,plane,mat:m,nmat,shadow:sh,wg,aura,name,cv,tex,hat,glider,gK:0,cloakK:0,view:'front',wKey:-1,wModel:null,hpKey:-1,flip:1};
   this.dynamic.add(g);this.drawName(e,true)}
  drawName(e,force){
   const s=e.spr;const key=Math.round(e.hp/5)*1000+Math.round(e.sh/5)+(e.ts>0?7:0);if(!force&&key===s.hpKey)return;s.hpKey=key;
@@ -111,14 +140,17 @@ export class Game{
   s.tex.needsUpdate=true}
  updateSprite(e,dt,cam){
   const s=e.spr;const spectating=!this.me.alive;const camTarget=this.viewEnt();
-  const vis=(e.alive||e.deadT<2)&&e.drop!=='bus'&&!(e===camTarget&&this.fpv);
+  const vis=(e.alive||e.deadT<2)&&e.drop!=='bus'&&!(e===camTarget&&this.fpv&&(this.tpK||0)<.05);
   s.group.visible=vis;if(!vis)return;
   const P=e.rpos;s.group.position.copy(P);
+  {const gl=s.glider,gliding=e.drop==='glide';s.gK=gliding?Math.min(1,(s.gK||0)+dt*4):0;gl.visible=gliding;
+   if(gliding){const k=Math.max(.05,s.gK);gl.scale.set(k,k,k);gl.rotation.y=e.yaw;gl.rotation.z=Math.sin(this.t*2.2+e.id)*.06}}
   const dx=cam.x-P.x,dz=cam.z-P.z,dl=Math.hypot(dx,dz)||1;const nx=dx/dl,nz=dz/dl;
   s.bb.rotation.y=Math.atan2(dx,dz);
   const fx=-Math.sin(e.yaw),fz=-Math.cos(e.yaw);const dot=fx*nx+fz*nz;
   const view=dot>.55?'front':dot<-.55?'back':'side';
-  if(view!==s.view){s.view=view;s.mat.map=charTex(e.char,view);s.mat.needsUpdate=true}
+  if(e.emote&&e.emote.tex){if(s.mat.map!==e.emote.tex){s.mat.map=e.emote.tex;s.mat.needsUpdate=true}}
+  else if(view!==s.view){s.view=view;s.mat.map=charTex(e.char,view);s.mat.needsUpdate=true}
   const rx=nz,rz=-nx;const faceRight=fx*rx+fz*rz>=0;
   let flip=view==='side'?(faceRight?1:-1):1;
   // animation
@@ -137,19 +169,38 @@ export class Game{
   if(e.drop==='free'){rz2+=view==='side'?.5*flip*-1:0;sy*=.92}
   if(e.shootT>0){e.shootT-=dt;sx*=1-.04*(e.shootT/.12)}
   if(e.punch>0){e.punch=Math.max(0,e.punch-dt*7);sx*=1+e.punch*.16;sy*=1-e.punch*.12;py+=e.punch*.06}
-  if(e.hitT>0){e.hitT-=dt;if(e.hitT>.09)s.mat.color.setRGB(2.2,2.2,2.2);else s.mat.color.setRGB(1.5,.45,.45)}else s.mat.color.setRGB(1,1,1);
+  if(e.hitT>0){e.hitT-=dt;if(e.hitT>.09)s.mat.color.setRGB(2.2,2.2,2.2);else s.mat.color.setRGB(1.5,.45,.45)}else if(e.slowT>0)s.mat.color.setRGB(.7,.9,1.35);else s.mat.color.setRGB(1,1,1);
+  if(e.char==='chillguy'){let gr=0,gg=0,gb=0;if(e.hitT>.09){gr=gg=gb=.7}else if(e.hitT>0){gr=.5}if(e.coldT>0){gg+=.12;gb+=.22}if(e.slowT>0){gg+=.1;gb+=.2}s.mat.glow.setRGB(gr,gg,gb)}
   if(!e.alive){e.deadT+=dt;const k=Math.min(1,e.deadT/.5);rz2=(flip>0?-1:1)*1.45*k;sy*=1-.2*k;s.mat.opacity=clamp(1.6-e.deadT,0,1);s.mat.transparent=true}
-  else s.mat.opacity=1;
+  else{s.mat.opacity=1;if(e.knocked)rz2=(flip>0?-1:1)*1.45}
   if(this.over&&e.id===this.winnerId){const em=e.cos.emote||0;const t=this.t*(em===0?5:em===1?3:4);if(em===0){flip*=Math.cos(t)}else if(em===1){py=Math.abs(Math.sin(t*2))*1.1;rz2=Math.sin(t*2)*.15}else{rz2=(t*2)%6.283;py=.5+Math.sin(t)*.2}}
+  // ---- hero ability animations
+  if(e.animT>0){e.animT=Math.max(0,e.animT-dt);const k=1-e.animT/(e.animDur||.35);
+   if(e.anim==='pan'){if(k<.4){const w=k/.4;rz2+=-.35*w*flip;sy*=1+.06*w}else{const w=(k-.4)/.6;rz2+=lerp(.35,0,w)*flip;sx*=1+.25*(1-w)}}
+   else if(e.anim==='food'){if(k<.3){sy*=1-.2*(k/.3)}else{const w=(k-.3)/.7,sn=Math.sin(w*Math.PI);py+=sn*.35;sy*=1+.15*sn;rz2+=Math.sin(w*18)*.22*(1-w)}}
+   else if(e.anim==='strike'){sx*=1.4;sy*=.82;rz2+=-.45*flip}}
+  if(e.cookT>0){py+=Math.abs(Math.sin(this.t*26))*.12;rz2+=Math.sin(this.t*13)*.1;sx*=1+Math.sin(this.t*26)*.03}
+  if(s.hat)s.hat.visible=e.cookT>0;
+  // ---- cloak (Chill Guy): others see nothing but a faint shimmer when close; a spectated Chill Guy is shown as a ghost
+  {const cl=e.cloakT>0;if(s.wasCl===undefined)s.wasCl=cl;
+   if(cl!==s.wasCl){s.wasCl=cl;if(!cl){this.fx.ring(P,2.2,'#9be0ff',.3);this.fx.burst(P.x,P.y+1,P.z,18,4,'#bff4ff',.5,-1)}}
+   s.cloakK=lerp(s.cloakK||0,cl?1:0,1-Math.exp(-12*dt));
+   if(s.cloakK>.01&&e.alive){const near=clamp((BAL.chill.disappear.shimmerRange-dl)/BAL.chill.disappear.shimmerRange,0,1),base=e===camTarget?.4:0;s.mat.opacity=1-s.cloakK*(1-Math.max(base,near*.3*(.65+.35*Math.sin(this.t*11))))}
+   s.plane.visible=s.mat.opacity>.02;
+   if(dl<60&&e.alive){s.fxT=(s.fxT||0)-dt;if(s.fxT<=0){s.fxT=.07;const rr=Math.random;
+    if(e.coldT>0)this.fx.emit(P.x+(rr()-.5),P.y+.4+rr()*1.4,P.z+(rr()-.5),0,.8,0,'#bff4ff',.6,0,.2,-.5,.5);
+    if(e.slowT>0)this.fx.emit(P.x+(rr()-.5),P.y+.1+rr()*.6,P.z+(rr()-.5),0,.3,0,'#7fe0ff',.5,0,.18,-.5,.6);
+    if(e.cookT>0)this.fx.puff(P.x+(rr()-.5)*.6,P.y+1.9,P.z+(rr()-.5)*.6,0,1.2,0,'#ffffff',.8,.5,1.6,.5,0,.8)}}}
+  const EA=e.emote&&e.spr?this.emoteAnim(e,s):null;if(EA){py+=EA.py;rz2+=EA.rz;sx*=EA.sx;sy*=EA.sy;s.pivot.position.x=EA.px}else s.pivot.position.x=0;
   s.pivot.position.y=bob+py;s.pivot.rotation.z=rz2+tilt;s.pivot.scale.set(sx*flip,sy,1);
   // aura / buffs
-  const aOn=(e.flags&512)||(e.flags&1024);s.aura.visible=!!aOn&&e.alive;if(aOn){s.aura.material.color.set((e.flags&512)?'#5ab8ff':'#ffd84a');s.aura.scale.setScalar(1+Math.sin(this.t*10)*.06)}
+  const aOn=(e.flags&512)||(e.flags&1024)||e.coldT>0;s.aura.visible=!!aOn&&e.alive&&!(s.cloakK>.5);if(aOn){s.aura.material.color.set(e.coldT>0?'#7fe0ff':(e.flags&512)?'#5ab8ff':'#ffd84a');s.aura.scale.setScalar(1+Math.sin(this.t*10)*.06)}
   // weapon
   const wi=e.wi;if(wi!==s.wKey){s.wKey=wi;if(s.wModel)s.wg.remove(s.wModel);s.wModel=null;if(wi>=0){const w=Math.floor(wi/10),r=wi%10;s.wModel=makeWeaponModel(w,r);s.wModel.scale.setScalar(.85);s.wModel.position.set(.36,.0,-.12);s.wg.add(s.wModel)}}
-  s.wg.visible=e.alive&&e.drop!=='free';s.wg.position.set(0,1.1+(e.crouch?-.3:0)+(e.sliding?-.35:0),0);s.wg.rotation.set(e.pitch,e.yaw,0,'YXZ');
-  const nd=Math.hypot(dx,dz);s.name.visible=e.alive&&nd<48&&e!==camTarget;if(s.name.visible)this.drawName(e)
+  s.wg.visible=e.alive&&e.drop!=='free'&&!(s.cloakK>.5&&e!==camTarget);s.wg.position.set(0,1.1+(e.crouch?-.3:0)+(e.sliding?-.35:0),0);s.wg.rotation.set(e.pitch,e.yaw,0,'YXZ');
+  const nd=Math.hypot(dx,dz);s.name.visible=e.alive&&nd<48&&e!==camTarget&&!(s.cloakK>.3);if(s.name.visible)this.drawName(e)
   const ss=clamp(1.1+nd*.012,1,2.2);s.name.scale.set(2.8*ss,.7*ss,1);
-  s.shadow.visible=e.grounded||!!e.drop===false;
+  s.shadow.visible=(e.grounded||!!e.drop===false)&&!(s.cloakK>.5);
   s.shadow.position.y=W.H(P.x,P.z)-P.y+.06;
  }
  viewEnt(){const me=this.me;if(me&&me.alive)return me;let t=this.ents.get(this.spectateId);if(!t||!t.alive){t=this.list.find(e=>e.alive&&e!==me);if(t)this.spectateId=t.id}return t||me}
@@ -178,17 +229,23 @@ export class Game{
     if(ev.by===this.myId&&ev.t!==this.myId){this.hud.hitmarker(false,!!ev.h,ev.sh&&!ev.hp);au.play(ev.h?'head':'hit');if(this.settings.dmgNumbers)this.hud.dmgNumber(new THREE.Vector3(ev.x,ev.y,ev.z),ev.d,!!ev.h,this)}
     if(ev.t===this.myId){this.hud.flashDamage(ev.by>=0&&this.ents.get(ev.by)?this.ents.get(ev.by).pos:null,this);au.play('hurt');this.view.shake=Math.min(1,this.view.shake+Math.min(.6,ev.d/60));if(me.use){me.use=null;this.hud.toast('Interrupted',"#ff7a7a")}}
     break}
-   case'kill':{const v=this.ents.get(ev.v),b=this.ents.get(ev.by);
+   case'kill':{const v=this.ents.get(ev.v),b=ev.by>=0?this.ents.get(ev.by):null;
     if(v){v.alive=false;v.hp=0;v.deadT=0;fx.burst(v.pos.x,v.pos.y+1,v.pos.z,40,9,'#ffd23d',.7,8);fx.burst(v.pos.x,v.pos.y+1,v.pos.z,24,6,'#ff6bd6',.8,6);fx.ring(v.pos,3,'#ffffff',.45)}
-    this.hud.killfeed(b?b.name:null,v?v.name:'?',ev.w,ev.by===this.myId,ev.v===this.myId);
+    this.hud.killfeed({code:ev.w,head:!!ev.h,mine:ev.by===this.myId,died:ev.v===this.myId,
+     killer:ev.by>=0?(b?{name:b.name,col:b.cdef&&b.cdef.color,me:ev.by===this.myId}:{gone:true}):null,
+     victim:{name:v?v.name:'Player',col:v&&v.cdef?v.cdef.color:null,me:ev.v===this.myId}});
     if(ev.by===this.myId&&ev.v!==this.myId){this.hud.hitmarker(true,false);au.play('kill');this.hud.toast('Eliminated '+(v?v.name:''),'#ffd23d')}
     if(ev.v===this.myId){this.onMeDead(ev)}
     if(v&&v.spr)au.play('hurt',v.pos,.8);
     break}
    case'ex':{const p=new THREE.Vector3(ev.x,ev.y,ev.z);fx.explosion(p,ev.r,ev.c||'#ff9a3c');au.play('expl',p,1.4);const cam=this.camera.position;const d=cam.distanceTo(p);this.view.shake=Math.min(1.2,this.view.shake+clamp(1.4-d/45,0,1.2));break}
+   case'emo':{const en=this.ents.get(ev.i);if(en){if(ev.on)this.applyEmote(en,ev.id);else this.clearEmote(en)}break}
    case'lt+':this.addLootObj(ev.l,true);break;
    case'lt-':this.removeLoot(ev.id);break;
    case'cho':{const l=this.loot.get(ev.id);if(l){l.opened=true;if(l.mesh){this.dynamic.remove(l.mesh);l.mesh=null}au.play('chest',new THREE.Vector3(l.x,l.y,l.z));fx.burst(l.x,l.y+.6,l.z,30,5,'#ffd23d',.8,6)}this.loot.delete(ev.id);break}
+   case'strk':{const r=new THREE.Mesh(new THREE.RingGeometry(4.6,5.3,40),new THREE.MeshBasicMaterial({color:'#ff4d3d',transparent:true,opacity:.75,side:THREE.DoubleSide,depthWrite:false}));r.rotation.x=-Math.PI/2;r.position.set(ev.x,W.H(ev.x,ev.z)+.15,ev.z);this.dynamic.add(r);au.play('click',new THREE.Vector3(ev.x,W.H(ev.x,ev.z),ev.z));setTimeout(()=>this.dynamic.remove(r),(ev.t||2.5)*1000);break}
+   case'pjv':{const p=this.pvis.get(ev.id);if(p){p.x=ev.x;p.y=ev.y;p.z=ev.z;p.vx=ev.vx;p.vy=ev.vy;p.vz=ev.vz}break}
+   case'dz':fx.tracer(new THREE.Vector3(ev.x1,ev.y1,ev.z1),new THREE.Vector3(ev.x2,ev.y2,ev.z2),'#7fe9ff',.05,.18);break;
    case'tp+':this.addTrapVis(ev);break;
    case'tp-':{const t=this.traps.get(ev.id);if(t){if(t.mesh)this.dynamic.remove(t.mesh);this.traps.delete(ev.id)}break}
    case'pj':this.addProjVis(ev);break;
@@ -200,31 +257,47 @@ export class Game{
    case'bite':{const t=this.ents.get(ev.t);if(t){fx.burst(t.pos.x,t.pos.y+1.2,t.pos.z,25,6,'#ff4a4a',.5,8);au.play('bite',t.pos)}break}
    case'storm':this.hud.announce(ev.m);au.play('storm');break;
    case'sd':{this.hud.announce('Supply drop incoming!','#ffd23d');au.play('drop');this.supplies.push({id:ev.id,x:ev.x,z:ev.z,t0:this.t,y0:ev.y0,landed:false});this.hud.markSupply(this.supplies);break}
+   case'bp':case'bh':case'bx':case'mats':case'hv':case'dec':case'ph':case'px':case'gain':this.onBuildEvent(ev);break;
+   case'ntf':if(this.me&&(ev.tm===undefined||ev.tm===this.me.team))this.hud.toast(ev.t,ev.c);break;
+   case'rb':if(ev.v===this.myId)this.onMeRebooted(ev);break;
    case'end':this.onEnd(ev);break;
    case'snd':au.play(ev.n,ev.p?new THREE.Vector3(...ev.p):null,ev.g||1);break;
    case'quip':break;
+   case'vfx':this.vfx(ev);break;
+   case'zn+':this.addZoneVis(ev);break;
+   case'zn-':this.removeZoneVis(ev.id);break;
+   case'pn+':this.addPanVis(ev);break;
+   case'pn~':this.turnPanVis(ev);break;
+   case'pn-':this.removePanVis(ev);break;
+   case'heal':this.healFx(ev);break;
   }
+ }
+ onMeRebooted(ev){
+  const me=this.me;me.alive=true;me.knocked=false;me.deadT=0;
+  if(this.role==='client'){me.pos.set(ev.x,ev.y,ev.z);me.rpos.copy(me.pos);me.vel.set(0,0,0)}
+  this.spectateId=-1;this.hud.hideElim();this.app.showCursor(false);this.app.lock();
  }
  onMeDead(ev){
   const me=this.me;me.alive=false;const killer=this.ents.get(ev.by);this.spectateId=killer&&killer.alive?killer.id:-1;this.audio.play('lose');
-  const place=ev.p||me.place;me.place=place;this.hud.showElim(place,killer?killer.name:(ev.w||'the storm'),me.kills,this)}
+  const place=ev.p||me.place;me.place=place;this.hud.showElim(place,killer?killer.name:(ev.w||'the storm'),me.kills,this);this.deathT=this.t;this.awardTokens(false)}
  onEnd(ev){
   if(this.over)return;this.over=true;this.winnerId=ev.win;const w=this.ents.get(ev.win);this.overT=this.t;
-  if(this.me.alive&&ev.win===this.myId){this.audio.play('win');this.hud.showVictory(this)}
+  this.awardTokens(this.me.team===ev.tm);if(this.me.team===ev.tm){this.audio.play('win');this.hud.showVictory(this)}
   else this.hud.announce((w?w.name:'Nobody')+' wins!','#ffd23d');
   this.hud.onEnd(this,ev)}
  // ---------- main update
  update(dt){
-  if(!this.running)return;dt=Math.min(dt,.05);this.t+=dt;
+  if(!this.running)return;dt=Math.min(dt,.05);this.t+=dt;this.emoteInput();
   const me=this.me;
   this.updateBus(dt);if(this.decor)this.decor.update(this.t);
   if(me.alive)this.updateLocal(dt);else this.updateSpectate(dt);
   if(this.role!=='client'){
-   this.updateBots(dt);this.updateProjs(dt);this.updateTraps(dt);this.updateStorm(dt);this.updateSupplies(dt);this.updateEntTimers(dt);this.checkWin()}
+   this.updateBots(dt);this.updateProjs(dt);this.updateHero(dt);this.updateTraps(dt);this.updateStorm(dt);this.updateSupplies(dt);this.updateEntTimers(dt);this.tickKnock(dt);this.updateEmotes();this.checkWin()}
   else{this.updateClientSim(dt)}
   for(const e of this.list){if(e===me)continue;this.updateRemoteMotion(e,dt)}
-  this.updateLootVis(dt);this.updateProjVis(dt);this.updateTrapVis(dt);this.updateStormVis(dt);
+  this.updateLootVis(dt);this.updateProjVis(dt);this.updateTrapVis(dt);this.updateStormVis(dt);this.updateHeroVis(dt);
   this.fx.update(dt);
+  this.structUpdateUI(dt);
   this.netTick(dt);
  }
  updateBus(dt){
@@ -257,10 +330,25 @@ export class Game{
   me.vel.set(0,0,0);
  }
  // ---------- camera & render
- render(dt){
+ tpPose(me,pos,quat){
+  const pitch=me.pitch,yaw=me.yaw,cp=Math.cos(pitch);
+  const fwd=[-Math.sin(yaw)*cp,Math.sin(pitch),-Math.cos(yaw)*cp];
+  const tgt=[me.pos.x,me.pos.y+1.5,me.pos.z],dist=4.8;
+  const hit=W.rayWorld(tgt[0],tgt[1],tgt[2],-fwd[0],-fwd[1],-fwd[2],dist+.3);
+  const d=hit?Math.max(.6,hit.t-.3):dist;
+  pos.set(tgt[0]-fwd[0]*d,tgt[1]-fwd[1]*d,tgt[2]-fwd[2]*d);
+  const look=new THREE.Vector3(tgt[0]+fwd[0]*12,tgt[1]+fwd[1]*12,tgt[2]+fwd[2]*12);
+  quat.setFromRotationMatrix(new THREE.Matrix4().lookAt(pos,look,new THREE.Vector3(0,1,0)));
+ }
+ render(dt){this.syncFieldVis();
   const cam=this.camera,s=this.settings,v=this.view;const tgt=this.viewEnt();if(!tgt)return;
   const fpv=this.fpv;
-  if(fpv){this.positionFPS(dt)}
+  // third person while diving and gliding; blends back to first person when the player lands
+  const me=this.me;if(me)me.rpos.copy(me.pos); // the local hero's sprite is drawn from its live position
+  const tpWant=fpv&&(me.drop==='free'||me.drop==='glide'||!!me.emote)?1:0;
+  this.tpK=(this.tpK||0)+(tpWant-(this.tpK||0))*(1-Math.exp(-9*dt));
+  if(fpv){this.positionFPS(dt);
+   if(this.tpK>.002){const fp=cam.position.clone(),fq=cam.quaternion.clone(),tp=new THREE.Vector3(),tq=new THREE.Quaternion();this.tpPose(me,tp,tq);cam.position.lerpVectors(fp,tp,this.tpK);cam.quaternion.copy(fq).slerp(tq,this.tpK)}}
   else{ // third person chase
    const yaw=(tgt.id===this.myId)?(this.specYaw||0):(this.specYaw||tgt.yaw)+0;
    const dist=5.5,pitch=this.specPitch||.35;const cx=tgt.rpos.x+Math.sin(yaw)*dist*Math.cos(pitch),cz=tgt.rpos.z+Math.cos(yaw)*dist*Math.cos(pitch),cyy=tgt.rpos.y+1.5+Math.sin(pitch)*dist;
@@ -273,7 +361,7 @@ export class Game{
   for(const e of this.list)this.updateSprite(e,dt,cam.position);
   const st=this.storm;const inStorm=this.insideStorm(cam.position.x,cam.position.z)===false;this.scene.fog.color.set(inStorm?'#7a4ab0':'#b9dcf5');this.fx.stormy=inStorm;
   this.renderWorld(cam);
-  if(fpv&&this.me.drop===null){this.updateViewmodel(dt);this.renderer.autoClear=false;this.renderer.clearDepth();this.renderer.render(this.vmScene,this.vmCam);this.renderer.autoClear=true}
+  if(fpv&&this.me.drop===null&&(this.tpK||0)<.02){this.updateViewmodel(dt);this.renderer.autoClear=false;this.renderer.clearDepth();this.renderer.render(this.vmScene,this.vmCam);this.renderer.autoClear=true}
  }
  renderWorld(cam){
   const r=this.renderer,pf=this.app.pf||1,use=pf<.99;
@@ -293,4 +381,4 @@ export class Game{
  }
  resize(w,h){this.camera.aspect=w/h;this.vmCam.aspect=w/h;this.camera.updateProjectionMatrix();this.vmCam.updateProjectionMatrix()}
 }
-Object.assign(Game.prototype,movementMethods,combatMethods,lootMethods,botMethods,netMethods);
+Object.assign(Game.prototype,emoteMethods,knockMethods,movementMethods,combatMethods,lootMethods,botMethods,netMethods,structMethods,heroMethods);

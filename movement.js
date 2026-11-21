@@ -1,13 +1,15 @@
 import * as THREE from 'three';
-import {WEAPONS,ITEMS,RARITY,clamp,lerp} from './data.js';
+import {WEAPONS,ITEMS,RARITY,BAL,clamp,lerp} from './data.js';
 import * as W from './world.js';
 import {R,HSTAND,HCROUCH,EYE,EYEC,EYES,GRAV,JUMP,WALK,SPRINT,CROUCH,wstat,makeWeaponModel,mat} from './shared.js';
+import {makeFloorItem} from './loot.js';
+import {CRAWL} from './knock.js';
 
 export const movementMethods={
  readInput(){
   const I=this.input,s=this.settings,me=this.me;
   const active=this.app.inputActive();
-  if(!active){return {f:0,s:0,jump:false,jumpP:false,sprint:false,crouch:me.crouchState||false,crouchP:false}}
+  if(!active||me.emote){return {f:0,s:0,jump:false,jumpP:false,sprint:false,crouch:me.crouchState||false,crouchP:false}}
   const f=(I.down('fwd')?1:0)-(I.down('back')?1:0),st=(I.down('right')?1:0)-(I.down('left')?1:0);
   let sprint=I.down('sprint');if(s.autoSprint&&f>0)sprint=true;
   let crouch;if(s.crouchToggle){if(I.pressed('crouch'))me.crouchState=!me.crouchState;crouch=!!me.crouchState}else crouch=I.down('crouch');
@@ -20,6 +22,7 @@ export const movementMethods={
   const cur=me.inv[me.cur];const wd=cur&&cur.k==='w'?wstat(cur.w,cur.r):null;
   if(active){const ads=v.adsK>.05;const ratio=Math.tan(this.camera.fov*Math.PI/360)/Math.tan(s.fov*Math.PI/360);let k=.0022*s.sens*s.camSens*ratio*(ads?(1-v.adsK)+v.adsK*s.adsSens:1);if(me.eatT>0)k*=.3;me.yaw-=dx*k;me.pitch=clamp(me.pitch-dy*k*(s.invertY?-1:1),-1.5,1.5)}
   const inp=this.readInput();
+  if(me.knocked){inp.jump=false;inp.jumpP=false;inp.sprint=false;inp.crouch=false;inp.crouchP=false}
   // bus
   if(me.drop==='bus'){
    const atEnd=this.bus.t*this.bus.speed>this.bus.len-25;
@@ -32,15 +35,25 @@ export const movementMethods={
   // weapon switching
   if(active&&me.drop===null){
    for(let i=0;i<6;i++)if(I.pressed('s'+(i+1)))this.swapTo(me,i);
-   if(I.pressed('next'))this.cycleSlot(me,1);if(I.pressed('prev'))this.cycleSlot(me,-1);
-   if(I.pressed('ab1'))this.useAbility(me,0);if(I.pressed('ab2'))this.useAbility(me,1);if(I.pressed('ab3'))this.useAbility(me,2);
-   if(I.pressed('drop'))this.dropCurrent(me);
+   if(I.pressed('build'))this.structToggle();
+   if(this.building){
+    if(I.pressed('next'))this.structCyclePiece(1);if(I.pressed('prev'))this.structCyclePiece(-1);
+    if(I.pressed('rotate'))this.bstate.rot^=1;
+    if(I.pressed('matcycle'))this.structCycleMat();
+    if(I.pressed('fire'))this.structPlace();
+   }else{
+    if(I.pressed('next'))this.cycleSlot(me,1);if(I.pressed('prev'))this.cycleSlot(me,-1);
+   }
+   if(!me.knocked&&I.pressed('ab1'))this.useAbility(me,0);if(!me.knocked&&I.pressed('ab2'))this.useAbility(me,1);if(!me.knocked&&I.pressed('ab3'))this.useAbility(me,2);
+   if(!me.knocked&&I.pressed('drop'))this.dropCurrent(me);
    // interact
    this.updateNearLoot(me);
-   if(I.pressed('interact')&&this.near)this.pickupLocal(me,this.near);
-  }else this.near=null;
+   if(I.pressed('interact')&&this.near&&!me.knocked&&!me.emote)this.pickupLocal(me,this.near);
+   if(!this.near){const kp=this.knockPrompt(me);this.hud.setPrompt(kp,{})}
+   me.holdI=!!I.down('interact')&&!me.knocked;
+  }else{this.near=null;me.holdI=false}
   const aimHeld=active&&(s.aimToggle?(I.pressed('aim')?(me.aimState=!me.aimState):me.aimState):I.down('aim'));
-  this.tickWeapon(me,{fire:active&&I.down('fire'),firePressed:active&&I.pressed('fire'),reload:active&&I.pressed('reload'),aim:!!aimHeld&&!me.use},dt);
+  this.tickWeapon(me,{fire:active&&!me.knocked&&!this.building&&I.down('fire'),firePressed:active&&!me.knocked&&!this.building&&I.pressed('fire'),reload:active&&!me.knocked&&!this.building&&I.pressed('reload'),aim:!!aimHeld&&!me.use&&!me.knocked},dt);
   // view recoil recovery
   const firing=this.t-(v.lastShot||-9)<.18;const rec=firing?2.2:9;v.recoilP*=Math.exp(-rec*dt);v.recoilY*=Math.exp(-rec*dt);v.kick*=Math.exp(-14*dt);
   v.adsT=clamp((v.adsT||0)+(me.aiming?1:-1)*dt/.15,0,1);v.adsK=v.adsT*v.adsT*(3-2*v.adsT);
@@ -49,36 +62,37 @@ export const movementMethods={
   // flags
   me.flags=this.packFlags(me);
   // sprint trail
+  if(me.spicyT>0&&Math.random()<.8)this.fx.emit(me.pos.x+(Math.random()-.5)*.4,me.pos.y+1+Math.random()*.4,me.pos.z+(Math.random()-.5)*.4,(Math.random()-.5)*1.2,1.8+Math.random()*1.5,(Math.random()-.5)*1.2,'#ff7a1a',.45,0);
   if(me.sprinting&&me.cos.trail&&Math.random()<.6)this.fx.emit(me.pos.x,me.pos.y+.2,me.pos.z,(Math.random()-.5)*.6,.5,(Math.random()-.5)*.6,me.cos.trail,.6,0);
  },
  leaveBus(e){if(e.drop!=='bus')return;e.drop='free';e.pos.copy(this.bus.pos);e.vel.set(this.bus.dx*this.bus.speed*.6,-2,this.bus.dz*this.bus.speed*.6);e.grounded=false;e.spawnT=this.t},
  move(e,inp,dt){
   if(!e.alive||e.drop==='bus')return;
-  for(const k of ['stun','slip','dance','dazed','eatT','buffT','auraT'])if(e[k]>0)e[k]=Math.max(0,e[k]-dt);
+  for(const k of ['stun','slip','dance','dazed','eatT','buffT','auraT','cloakT','coldT','slowT','cookT','energyT','spicyT'])if(e[k]>0)e[k]=Math.max(0,e[k]-dt);
   for(let i=0;i<3;i++)if(e.cd[i]>0)e.cd[i]-=dt;
   if(e.drop){this.moveDrop(e,inp,dt);return}
   const P=e.pos,V=e.vel;
-  const stunned=e.stun>0||e.slip>0||e.dance>0||e.eatT>0;
+  const stunned=e.stun>0||!!e.emote||e.slip>0||e.dance>0||e.eatT>0;
   const h=(e.crouch||e.sliding)?HCROUCH:HSTAND;
   let gnd=W.groundAt(P.x,P.z,P.y,R),swim=false;
   if(W.H(P.x,P.z)<-.9){gnd=Math.max(gnd,-.9);swim=true}e.swim=swim;
   const wasG=e.grounded;const onG=P.y<=gnd+.07&&V.y<=.5;e.grounded=onG;
   let hs=Math.hypot(V.x,V.z);
   // slide
-  if(!stunned&&inp.crouchP&&onG&&!e.sliding&&hs>6.2&&!swim&&!e.dash){e.sliding=true;e.slideT=0;e.slideAir=0;const k=Math.min(1.2,15/hs);V.x*=k;V.z*=k;this.audio.play('slide',e.pos,.6)}
+  if(!stunned&&inp.crouchP&&onG&&!e.sliding&&hs>6.2&&!swim&&!e.dash){e.sliding=true;e.slideT=0;e.slideAir=0;const k=Math.min(1.2,15/hs);V.x*=k;V.z*=k;this.audio.play('slide',e.pos,e.char==='chillguy'?.6*BAL.chill.quiet.stepVol:.6)}
   if(e.sliding){e.slideAir=onG?0:(e.slideAir||0)+dt;e.slideT+=dt;if(!inp.crouch||hs<3||e.slideAir>.3||stunned||swim)e.sliding=false}
   e.crouch=inp.crouch&&!e.sliding&&onG&&!stunned;
   // wish
   const sy=Math.sin(e.yaw),cy=Math.cos(e.yaw);
   let f=stunned?0:inp.f,sd=stunned?0:inp.s;
   let wx=-sy*f+cy*sd,wz=-cy*f-sy*sd;const wl=Math.hypot(wx,wz);if(wl>1){wx/=wl;wz/=wl}
-  let sp=WALK;const spr=inp.sprint&&f>0&&!e.crouch&&!e.sliding&&!e.use&&!swim;
-  if(spr)sp=SPRINT;if(e.crouch)sp=CROUCH;if(e.buffT>0)sp*=1.15;if(e.use)sp*=.5;if(swim)sp*=.5;if(e.dazed>0)sp*=.55;if(e.cdef.id==='zach')sp*=1;if(e.botSpeed)sp*=e.botSpeed;
+  let sp=WALK;const spr=inp.sprint&&f>0&&!e.crouch&&!e.sliding&&!e.use&&!swim&&!(e.cookT>0);
+  if(spr)sp=SPRINT;if(e.crouch)sp=CROUCH;if(e.knocked)sp=CRAWL;if(e.buffT>0)sp*=1.15;if(e.coldT>0)sp*=BAL.chill.cold.speedMul;if(e.slowT>0)sp*=1-(e.slowK||.4);if(e.cookT>0)sp*=BAL.jay.kitchen.moveMul;if(e.energyT>0)sp*=1.25;if(e.use)sp*=.5;if(swim)sp*=.5;if(e.dazed>0)sp*=.55;if(e.cdef.id==='zach')sp*=1;if(e.botSpeed)sp*=e.botSpeed;
   e.sprinting=spr&&wl>.1&&onG;
   let justJumped=false;
   // grapple
   if(e.grap){const g=e.grap;const gx=g.x-P.x,gy=g.y-(P.y+1),gz=g.z-P.z,gd=Math.hypot(gx,gy,gz);g.t+=dt;V.set(gx/gd*38,gy/gd*38,gz/gd*38);if(gd<3||g.t>2.4){e.grap=null;V.multiplyScalar(.45)}e.grounded=false}
-  else if(e.dash){const d=e.dash;V.x=d.vx;V.z=d.vz;d.t-=dt;if(d.kind==='bite'&&this.findBiteTarget(e,1.9))d.t=0;if(d.t<=0){e.dash=null;V.x*=.25;V.z*=.25;if(d.end)d.end.call(this,e)}}
+  else if(e.dash){const d=e.dash;V.x=d.vx;V.z=d.vz;d.t-=dt;if((d.kind==='bite'||d.kind==='strike')&&this.findBiteTarget(e,1.9))d.t=0;if(d.t<=0){e.dash=null;V.x*=.25;V.z*=.25;if(d.end)d.end.call(this,e)}}
   else if(e.sliding){
    const[gx,gz]=W.slope(P.x,P.z);V.x+=-gx*30*dt;V.z+=-gz*30*dt;hs=Math.hypot(V.x,V.z);
    const sm=Math.hypot(gx,gz);const down=hs>.1?(V.x*-gx+V.z*-gz)/(hs*(sm+1e-4)):0;
@@ -102,6 +116,8 @@ export const movementMethods={
    if(sz!==0){if(!W.blocked(P.x,P.y,P.z+sz,R,h))P.z+=sz;else V.z*=.2}}
   W.pushOutCircles(e,R,h);
   const rr=Math.hypot(P.x,P.z);if(rr>W.HALF-8){const k=(W.HALF-8)/rr;P.x*=k;P.z*=k}
+  // jetpack: holding jump in the air thrusts up until the fuel runs out
+  if(e.jetFuel>0&&inp.jump&&!onG&&!e.grap&&!swim&&!e.dash){V.y=Math.min(V.y+(GRAV+30)*dt,11);e.jetFuel=Math.max(0,e.jetFuel-dt);if(e.local&&Math.random()<.8)this.fx.emit(P.x,P.y+.2,P.z,(Math.random()-.5)*.5,-2,(Math.random()-.5)*.5,'#ffb347',.3,0)}
   // vertical
   let ng=W.groundAt(P.x,P.z,P.y,R);if(W.H(P.x,P.z)<-.9)ng=Math.max(ng,-.9);
   if(e.grap){P.y+=V.y*dt;if(P.y<ng)P.y=ng;e.grounded=false}
@@ -112,11 +128,11 @@ export const movementMethods={
    else if(wasG&&P.y-ng<.5&&V.y<=0&&!e.dash){P.y=ng;V.y=0;e.grounded=true}
    else e.grounded=false}
   // footsteps
-  if(e.grounded&&!e.sliding&&sp2>3&&!swim){e.stepD=(e.stepD||0)+sp2*dt;if(e.stepD>2.2){e.stepD=0;const dd=Math.hypot(e.pos.x-this.camera.position.x,e.pos.z-this.camera.position.z);if(dd<35)this.audio.play('step',e.pos,e.crouch?.3:.7)}}
+  if(e.grounded&&!e.sliding&&sp2>3&&!swim){e.stepD=(e.stepD||0)+sp2*dt;if(e.stepD>2.2){e.stepD=0;const dd=Math.hypot(e.pos.x-this.camera.position.x,e.pos.z-this.camera.position.z),q=e.char==='chillguy';if(dd<(q?BAL.chill.quiet.stepRange:35))this.audio.play('step',e.pos,(e.crouch?.3:.7)*(q?BAL.chill.quiet.stepVol:1))}}
   if(!e.local)e.crouchState=e.crouch;
  },
  onLand(e,imp){e.landT=.18;if(e.local){this.view.kick=Math.min(1,imp/20);if(imp>10)this.view.shake=Math.min(.5,this.view.shake+.2)}
-  if(e.slamming){e.slamming=false;this.slamLand(e)}else if(imp>7){const dd=e.pos.distanceTo(this.camera.position);if(dd<40)this.audio.play('step',e.pos,.9)}},
+  if(e.slamming){e.slamming=false;this.slamLand(e)}else if(imp>7){const dd=e.pos.distanceTo(this.camera.position),q=e.char==='chillguy';if(dd<(q?BAL.chill.quiet.stepRange:40))this.audio.play('step',e.pos,q?.9*BAL.chill.quiet.stepVol:.9)}},
  moveDrop(e,inp,dt){
   const P=e.pos,V=e.vel;const gnd=W.groundAt(P.x,P.z,P.y,R);const alt=P.y-gnd;
   const sy=Math.sin(e.yaw),cy=Math.cos(e.yaw);let wx=-sy*inp.f+cy*inp.s,wz=-cy*inp.f-sy*inp.s;const wl=Math.hypot(wx,wz);if(wl>1){wx/=wl;wz/=wl}
@@ -138,6 +154,8 @@ export const movementMethods={
    case'dance':e.dance=st.t||3;e.use=null;break;
    case'daze':e.dazed=st.t||1;break;
    case'stun':e.stun=st.t||.5;break;
+   case'slow':e.slowT=st.t||1.5;e.slowK=st.f||.4;break;
+   case'reveal':e.cloakT=0;break;
   }
  },
  positionFPS(dt){
@@ -164,7 +182,7 @@ export const movementMethods={
   let key=cur?(cur.k==='w'?'w'+cur.w+'_'+cur.r:'i'+cur.id):'none';
   if(me.eatT>0)key='none';
   if(key!==this.vmKey){this.vmKey=key;if(this.vmModel)this.vmScene.remove(this.vmModel);this.vmModel=null;
-   if(key!=='none'){let m;if(cur.k==='w'){m=makeWeaponModel(cur.w,cur.r);m.rotation.y=0}else{const it=ITEMS[cur.id];m=new THREE.Group();const b=new THREE.Mesh(new THREE.BoxGeometry(.18,.3,.18),mat(it.col));b.position.set(0,0,-.4);m.add(b);if(it.kind==='throw'){b.geometry=new THREE.SphereGeometry(.12,10,8)}}
+   if(key!=='none'){let m;if(cur.k==='w'){m=makeWeaponModel(cur.w,cur.r);m.rotation.y=0}else{m=makeFloorItem(cur);const c0=new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3());m.position.sub(c0);m.position.z-=.4}
     m.scale.setScalar(.55);m.updateMatrixWorld(true);const bb=new THREE.Box3().setFromObject(m);this.vmTip=bb.min.z;this.vmModel=new THREE.Group();this.vmModel.add(m);this.vmScene.add(this.vmModel);
     const fl=new THREE.Mesh(new THREE.PlaneGeometry(.35,.35),new THREE.MeshBasicMaterial({color:'#ffd070',transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,side:THREE.DoubleSide}));fl.position.set(0,0,this.vmTip-.05);this.vmFlash=fl;this.vmModel.add(fl)}}
   if(!this.vmModel)return;

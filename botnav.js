@@ -84,3 +84,9 @@ export function findPath(sx,sz,tx,tz,maxExp=7000){
  const out=[];for(let i=bestI;i!==-1&&i!==s0;i=PAR[i])out.push([cellCentre(i%N),cellCentre((i/N)|0)]);
  out.reverse();
  return out}
+
+// ---- structure support: when solids or trees change, forget cached walkability in that rectangle
+export function invalidateRect(x0,z0,x1,z1){
+ const ix0=Math.max(0,cellOf(x0)),ix1=Math.min(N-1,cellOf(x1)),iz0=Math.max(0,cellOf(z0)),iz1=Math.min(N-1,cellOf(z1));
+ for(let iz=iz0;iz<=iz1;iz++)for(let ix=ix0;ix<=ix1;ix++)ST[iz*N+ix]=0}
+export function resetAll(){ST.fill(0);bad.clear()}
